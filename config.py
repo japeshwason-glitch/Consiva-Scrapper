@@ -34,6 +34,12 @@ APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY")
 LUSHA_API_KEY = os.environ.get("LUSHA_API_KEY")
 APIFY_API_TOKEN = os.environ.get("APIFY_API_TOKEN")
 
+# Both accounts are on free tiers. Stage 06 may use Apollo's people SEARCH
+# (free) to identify the right persona, but must NOT call people/match with
+# reveal_personal_emails -- that consumes paid credits this account does not
+# have. Flip when the account is upgraded.
+APOLLO_ALLOW_EMAIL_REVEAL = os.environ.get("APOLLO_ALLOW_EMAIL_REVEAL", "0") not in ("0", "false", "False", "")
+
 # Local llama.cpp server used for soft-field extraction in stage 03.
 # Self-hosted on the LAN: no company data leaves the network, and inference is
 # free, so it can run on every page rather than being rationed.

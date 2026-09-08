@@ -482,3 +482,130 @@ def is_blocked(title, text, status=None):
     # A 402 suspended store that still renders its shop name is NOT blocked --
     # that page identifies the company perfectly well.
     return bool(status in BLOCKING_STATUSES and len((text or "").strip()) < 400)
+
+
+# --- data-collection forms ---------------------------------------------------
+# Cookies are only half of DPDP. A contact or enquiry form that takes a name,
+# phone or email IS personal-data processing, and it needs notice and consent
+# whether or not the site sets a single cookie. Roughly 58% of the sites we
+# scrape set no cookies at all and score zero on the cookie axis -- some of
+# them are collecting personal data in plain sight.
+
+# Third-party form embeds: the data leaves the company's own infrastructure
+# before it reaches them, which is a processor relationship they usually have
+# not documented.
+FORM_EMBED_SIGNATURES = (
+    ("Google Forms",   ("docs.google.com/forms", "google.com/forms")),
+    ("Typeform",       ("typeform.com",)),
+    ("HubSpot Forms",  ("js.hsforms.net", "hsforms.com", "forms.hsforms")),
+    ("Zoho Forms",     ("forms.zohopublic", "zohoforms")),
+    ("JotForm",        ("jotform.com",)),
+    ("Wufoo",          ("wufoo.com",)),
+    ("Formspree",      ("formspree.io",)),
+    ("Mailchimp Form", ("list-manage.com", "chimpstatic")),
+    ("WPForms",        ("wpforms",)),
+    ("Contact Form 7", ("wpcf7", "contact-form-7")),
+    ("Gravity Forms",  ("gform_", "gravityforms")),
+)
+
+PERSONAL_FIELD_PATTERNS = {
+    "email":   (r"\bemail\b", r"\be-?mail\b", r"\bmail\b"),
+    "phone":   (r"\bphone\b", r"\bmobile\b", r"\btel\b", r"\bcontact.?number\b", r"\bwhatsapp\b"),
+    "name":    (r"\bname\b", r"\bfull.?name\b", r"\bfirst.?name\b", r"\blast.?name\b"),
+    "address": (r"\baddress\b", r"\bcity\b", r"\bpincode\b", r"\bpin.?code\b", r"\bzip\b"),
+    "company": (r"\bcompany\b", r"\borganisation\b", r"\borganization\b"),
+    "message": (r"\bmessage\b", r"\benquiry\b", r"\binquiry\b", r"\bcomment\b", r"\brequirement\b"),
+}
+
+# Personal data in the DPDP sense -- a message box alone is not.
+IDENTIFYING_FIELDS = ("email", "phone", "name", "address")
+
+
+def detect_form_embed(blob):
+    """Third-party form provider present on the page, or None."""
+    return _match(blob, FORM_EMBED_SIGNATURES)
+
+
+def classify_form_fields(field_descriptors):
+    """
+    field_descriptors: list of strings gathered from each input's name, id,
+    placeholder, type and nearby label. Returns the set of personal-data
+    categories the form collects.
+    """
+    found = set()
+    for descriptor in field_descriptors:
+        text = (descriptor or "").lower()
+        hits = {c for c, patterns in PERSONAL_FIELD_PATTERNS.items()
+                if any(re.search(p, text) for p in patterns)}
+        # "Email Address" is one field, not two: the word 'address' inside an
+        # email label is not a postal address.
+        if "email" in hits:
+            hits.discard("address")
+        found |= hits
+    return sorted(found)
+
+
+def form_gap(forms):
+    """
+    Summarises the form findings for scoring and for the export line.
+
+    `forms` is what FORM_JS returns from the page: one dict per form with
+    `fields` (descriptors), `has_consent_checkbox`, `has_privacy_link`,
+    `action_host`, `external_action`.
+    """
+    collecting = []
+    for form in forms or []:
+        categories = classify_form_fields(form.get("fields") or [])
+        if any(c in IDENTIFYING_FIELDS for c in categories):
+            collecting.append({**form, "categories": categories})
+
+    if not collecting:
+        return {"has_data_form": False, "forms_collecting": 0, "field_categories": [],
+                "consent_checkbox": None, "privacy_link": None, "external_hosts": []}
+
+    categories = sorted({c for f in collecting for c in f["categories"]})
+    return {
+        "has_data_form": True,
+        "forms_collecting": len(collecting),
+        "field_categories": categories,
+        # True only if EVERY collecting form asks for consent
+        "consent_checkbox": all(f.get("has_consent_checkbox") for f in collecting),
+        "privacy_link": any(f.get("has_privacy_link") for f in collecting),
+        "external_hosts": sorted({f["action_host"] for f in collecting
+                                  if f.get("external_action") and f.get("action_host")}),
+    }
+
+
+def gap_score_with_forms(has_cmp, analysis, banner, policy, forms=None):
+    """
+    consent_gap_score including data-collection forms.
+
+    Supersedes gap_score(): that returned 0 whenever a site set no tracking
+    cookies, which wrote off 58% of scraped sites -- including any that quietly
+    collect names, phone numbers and emails through an enquiry form with no
+    consent checkbox and no privacy notice. Under DPDP that is processing
+    personal data without notice, and it is a gap worth selling against even
+    when not a single cookie fires.
+
+    Forms add up to 45 on their own:
+      collects identifying data, no consent checkbox   25
+      collects identifying data, no privacy link       10
+      posts to a third-party host                      10
+    """
+    base = gap_score(has_cmp, analysis, banner, policy)
+    if has_cmp:
+        return 0        # they already run a CMP; not a lead regardless
+
+    form = forms or {}
+    if not form.get("has_data_form"):
+        return base
+
+    extra = 0
+    if not form.get("consent_checkbox"):
+        extra += 25
+    if not form.get("privacy_link") and not policy:
+        extra += 10
+    if form.get("external_hosts"):
+        extra += 10
+
+    return int(min(100, base + extra))

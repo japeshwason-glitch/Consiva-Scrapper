@@ -100,6 +100,51 @@ EXTRACT_JS = """
 
 
 
+# Runs in the page: describes every form well enough to classify what personal
+# data it collects, and whether the visitor is told anything before giving it.
+FORM_JS = r"""
+() => {
+  const host = location.hostname.replace(/^www\./, '');
+  return Array.from(document.querySelectorAll('form')).slice(0, 12).map(f => {
+    const fields = Array.from(f.querySelectorAll('input,textarea,select'))
+      .filter(el => !['hidden','submit','button','image'].includes((el.type||'').toLowerCase()))
+      .map(el => {
+        let label = '';
+        if (el.id) {
+          const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+          if (l) label = l.innerText || '';
+        }
+        if (!label && el.closest('label')) label = el.closest('label').innerText || '';
+        return [el.name, el.id, el.placeholder, el.type, el.getAttribute('aria-label'), label]
+          .filter(Boolean).join(' ');
+      });
+
+    // A consent checkbox is an unchecked box whose wording mentions consent,
+    // agreement, a privacy policy or terms.
+    const hasConsent = Array.from(f.querySelectorAll('input[type=checkbox]')).some(cb => {
+      const near = ((cb.closest('label') || cb.parentElement || {}).innerText || '').toLowerCase();
+      return /consent|agree|privacy|terms|permission|opt.?in/.test(near);
+    });
+    const hasPrivacyLink = Array.from(f.querySelectorAll('a[href]')).some(a =>
+      /privacy|policy|terms/i.test(a.getAttribute('href') + ' ' + (a.innerText || '')));
+
+    let actionHost = '', external = false;
+    try {
+      const action = f.getAttribute('action');
+      if (action) {
+        const u = new URL(action, location.href);
+        actionHost = u.hostname.replace(/^www\./, '');
+        external = actionHost !== host;
+      }
+    } catch (e) {}
+
+    return {fields, has_consent_checkbox: hasConsent, has_privacy_link: hasPrivacyLink,
+            action_host: actionHost, external_action: external};
+  });
+}
+"""
+
+
 def clean_text(raw, limit=MAX_TEXT_CHARS):
     return re.sub(r"\s{2,}", " ", re.sub(r"\n{2,}", "\n", (raw or ""))).strip()[:limit]
 
@@ -130,7 +175,26 @@ def count_roles(text):
     return len({ln for ln in lines if ROLE_HINT.search(ln)})
 
 
-def build_consent_summary(cmp_name, analysis, banner, policy):
+def build_form_sentence(form_gap, embed):
+    """The form finding, in the same factual register as the cookie finding."""
+    if not form_gap["has_data_form"]:
+        return None
+    fields = ", ".join(form_gap["field_categories"])
+    parts = [f"collects personal data via {form_gap['forms_collecting']} web form(s) "
+             f"({fields})"]
+    parts.append("with no consent checkbox" if not form_gap["consent_checkbox"]
+                 else "with a consent checkbox")
+    if not form_gap["privacy_link"]:
+        parts.append("and no privacy link on the form")
+    if form_gap["external_hosts"]:
+        parts.append(f"submitted to third-party host(s): "
+                     f"{', '.join(form_gap['external_hosts'])}")
+    if embed:
+        parts.append(f"form provider: {embed}")
+    return " ".join(parts)
+
+
+def build_consent_summary(cmp_name, analysis, banner, policy, form_gap=None, embed=None):
     """
     The factual consent finding, assembled from the scrape. Deterministic by
     design: this string reaches the CRM person via stage 07, and CLAUDE.md
@@ -171,6 +235,10 @@ def build_consent_summary(cmp_name, analysis, banner, policy):
 
     parts.append("cookie banner present" if banner else "no cookie banner")
     parts.append("privacy/cookie policy linked" if policy else "no privacy policy linked")
+
+    form_sentence = build_form_sentence(form_gap or {"has_data_form": False}, embed)
+    if form_sentence:
+        parts.append(form_sentence)
     return "; ".join(parts) + "."
 
 
@@ -216,6 +284,9 @@ async def scrape_one(browser, company, use_llm):
         scripts = await page.evaluate(
             "() => Array.from(document.querySelectorAll('script[src]')).map(s => s.src)"
         )
+        forms = await page.evaluate(FORM_JS)
+        # Contact pages carry the real enquiry form far more often than the
+        # homepage does, so their forms are merged in below.
         cookies = await context.cookies()
         await page.close()
 
@@ -236,7 +307,10 @@ async def scrape_one(browser, company, use_llm):
         # first-party cookie as third-party.
         final_domain = urlparse(final_url).netloc.lower().removeprefix("www.") or domain
         analysis = fingerprints.analyse_cookies(cookies, final_domain)
-        gap_score = fingerprints.gap_score(has_cmp, analysis, banner, policy)
+        form_gap = fingerprints.form_gap(forms)
+        form_embed = fingerprints.detect_form_embed(blob)
+        gap_score = fingerprints.gap_score_with_forms(
+            has_cmp, analysis, banner, policy, form_gap)
 
         result = {
             "cin": company["cin"], "company_name": name, "domain": domain,
@@ -251,8 +325,14 @@ async def scrape_one(browser, company, use_llm):
             "third_party_count": analysis["third_party_count"],
             "max_cookie_lifetime_days": analysis["max_lifetime_days"],
             "has_cookie_banner": banner, "has_privacy_policy": policy,
-            "consent_gap_summary": build_consent_summary(cmp_name, analysis, banner, policy),
+            "consent_gap_summary": build_consent_summary(
+                cmp_name, analysis, banner, policy, form_gap, form_embed),
             "consent_gap_score": gap_score,
+            "has_data_form": form_gap["has_data_form"],
+            "form_field_types": form_gap["field_categories"],
+            "form_consent_checkbox": form_gap["consent_checkbox"],
+            "form_third_party_hosts": form_gap["external_hosts"],
+            "form_embed_provider": form_embed,
             "cookie_categories": analysis["by_category"],
             **tech,
             "footer_address": None, "footer_phone": None,
@@ -303,7 +383,8 @@ async def scrape_one(browser, company, use_llm):
             result["company_tagline"] = soft["tagline"] or (meta_desc[:300] or None)
             result["notable_clients"] = soft["notable_clients"]
             result["founder_name_site"] = soft["founder_name"]
-            result["team_headcount_site"] = soft["team_headcount"]
+            # team_headcount_site retired: it came back null on essentially
+            # every site, and LinkedIn (stage 04) is the real source.
 
             if careers_text:
                 roles = await asyncio.to_thread(
@@ -353,6 +434,8 @@ SCRAPE_FIELDS = (
     "has_cookie_banner", "has_privacy_policy", "consent_gap_score",
     "final_domain", "cookies_total", "tracking_cookie_count",
     "third_party_domains", "third_party_count", "max_cookie_lifetime_days",
+    "has_data_form", "form_field_types", "form_consent_checkbox",
+    "form_third_party_hosts", "form_embed_provider",
 )
 
 

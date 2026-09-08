@@ -132,3 +132,16 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS reg_locations  JSONB;
 -- accepted domain can be traced to why it was accepted.
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS resolve_match_score INTEGER;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS resolve_evidence    TEXT;
+
+-- Data-collection forms. Cookies are only half of DPDP: an enquiry form taking
+-- a name, phone or email is personal-data processing and needs notice and
+-- consent whether or not a single cookie fires. Without this, ~58% of scraped
+-- sites scored zero and were written off.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS has_data_form        BOOLEAN;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS form_field_types     JSONB;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS form_consent_checkbox BOOLEAN;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS form_third_party_hosts JSONB;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS form_embed_provider  TEXT;
+
+-- LinkedIn company page URL, kept alongside the enrichment for audit.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS linkedin_url TEXT;

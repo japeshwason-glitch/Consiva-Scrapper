@@ -18,13 +18,22 @@ urllib3.disable_warnings()
 UA={"User-Agent":"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120.0 Safari/537.36"}
 ACCEPT = 60
 
-def fetch(domain):
-    for scheme in ("https://","http://"):
-        try:
-            r=requests.get(f"{scheme}{domain}",headers=UA,timeout=(4,6),
-                           allow_redirects=True,verify=False)
-            if r.text and r.text.strip(): return r.text
-        except requests.RequestException: continue
+def fetch(domain, attempts=3):
+    """
+    Patient fetch. The first pass used a 4s/6s budget tuned for scanning
+    thousands of hosts and left 51 rows undetermined -- small Indian SME hosts
+    are slow and intermittent, not absent. Here correctness matters more than
+    throughput, so each host gets several tries with a real timeout.
+    """
+    import time
+    for attempt in range(attempts):
+        for scheme in ("https://","http://"):
+            try:
+                r=requests.get(f"{scheme}{domain}",headers=UA,timeout=(8,20),
+                               allow_redirects=True,verify=False)
+                if r.text and r.text.strip(): return r.text
+            except requests.RequestException: continue
+        if attempt < attempts-1: time.sleep(2)
     return None
 
 def page(html):
@@ -48,11 +57,11 @@ def check(c):
 targets=[]
 for status in ("scraped","not_a_lead","linkedin_done","classified","contact_done","contact_failed"):
     targets += [c for c in db.get_pending(status, limit=2000)
-                if c.get("resolved_domain") and c.get("resolve_verified_by") != "llm-match-score"]
+                if c.get("resolved_domain") and c.get("resolve_verified_by") is None]
 print(f"re-verifying {len(targets)} rows accepted before the match-score resolver\n")
 
 kept=demoted=unknown=0
-with ThreadPoolExecutor(max_workers=6) as pool:
+with ThreadPoolExecutor(max_workers=4) as pool:
     futures={pool.submit(check,c):c for c in targets}
     for f in as_completed(futures):
         c=futures[f]; name=c["company_name"][:38]
@@ -70,5 +79,6 @@ with ThreadPoolExecutor(max_workers=6) as pool:
                               last_error=f"re-verified against match_score: {why[:280]}")
         else:
             unknown+=1
+            print(f"  ?       {name:<40} {dom:<28} {why[:56]}",flush=True)
 print(f"\nkept {kept}, demoted {demoted}, undetermined {unknown}")
 print("status counts:", db.count_by_status())

@@ -33,14 +33,29 @@ import db
 # Marketing Head.
 TITLE_PRIORITY = (
     (("founder", "co-founder", "cofounder"), 100),
-    (("chief executive", "ceo", "managing director", " md"), 90),
-    (("proprietor", "partner", "owner"), 85),
-    (("director",), 80),
-    (("chief technology", "cto", "chief information", "cio"), 70),
-    (("head of engineering", "head of product", "vp engineering", "vp product"), 60),
-    (("marketing head", "head of marketing", "vp marketing", "cmo",
-      "marketing manager", "digital marketing"), 55),
-    (("it manager", "it head", "webmaster"), 45),
+    (("chief executive", "ceo", "managing director", " md ", "mng director"), 95),
+    # Indian SMEs are usually run by a proprietor, partner or director rather
+    # than anyone with a C-title. The first pass scored only the C-suite and
+    # missed real decision-makers: NXTRA VIZAG had 25 contactable people and
+    # none matched, top of the list being "GM & ...".
+    (("proprietor", "partner", "owner", "promoter"), 90),
+    (("director",), 85),
+    (("president", "vice president", " vp ", "avp"), 75),
+    (("general manager", " gm ", "gm&", "country manager", "business head"), 72),
+    (("chief technology", "cto", "chief information", "cio",
+      "chief operating", "coo", "chief marketing", "cmo",
+      "chief compliance", "chief data"), 70),
+    (("head of engineering", "head of product", "head of operations",
+      "head of technology", "head of it", "head of digital",
+      "head of marketing", "head of sales", "head of business"), 65),
+    (("vp engineering", "vp product", "vp marketing", "vp sales"), 62),
+    (("marketing head", "marketing manager", "digital marketing",
+      "brand manager", "ecommerce manager"), 58),
+    (("data protection officer", "dpo", "compliance", "legal head",
+      "company secretary"), 56),
+    (("it manager", "it head", "system administrator", "webmaster",
+      "technical head", "plant head"), 48),
+    (("manager",), 35),          # last resort -- better than nobody
 )
 
 # Above this headcount the founder is unreachable and the person who actually
@@ -137,7 +152,12 @@ def main():
                                   last_error=f"apollo: {note[:300]}")
             continue
 
-        contact_name = f"{person.get('first_name','')} {person.get('last_name_obfuscated','')}".strip()
+        # Apollo returns the literal string "None" for a missing surname on
+        # some records; joined naively that produces "Andrew None" in the CSV.
+        parts = [person.get("first_name"), person.get("last_name_obfuscated")]
+        contact_name = " ".join(
+            p for p in parts if p and str(p).strip().lower() not in ("none", "null")
+        ).strip()
         email = None
         if reveal:
             try:

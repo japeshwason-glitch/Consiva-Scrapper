@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consiva Pipeline</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --bg:#F4F6F5; --panel:#FFFFFF; --ink:#161B1A; --muted:#65706D;
+    --line:#DDE3E1; --line-soft:#EAEFED;
+    --accent:#1F6F5C; --accent-soft:#E4F0EC;
+    --crit:#B3402F; --warn:#B07A16; --ok:#2E7D5B;
+    --chip:#EFF3F1;
+    --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+    --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root:not([data-theme="light"]){
+      --bg:#101413; --panel:#171D1B; --ink:#E8EDEB; --muted:#93A09C;
+      --line:#26302D; --line-soft:#1E2725; --accent:#57B396; --accent-soft:#1B2E28;
+      --crit:#E2705C; --warn:#D9A441; --ok:#57B396; --chip:#1E2725;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#101413; --panel:#171D1B; --ink:#E8EDEB; --muted:#93A09C;
+    --line:#26302D; --line-soft:#1E2725; --accent:#57B396; --accent-soft:#1B2E28;
+    --crit:#E2705C; --warn:#D9A441; --ok:#57B396; --chip:#1E2725;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+       font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+  #root{height:100vh;display:flex;flex-direction:column}
+  header{display:flex;align-items:baseline;gap:18px;padding:14px 22px;
+         border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+  .brand{font-weight:700;letter-spacing:-.01em;font-size:15px}
+  .brand span{color:var(--muted);font-weight:400;margin-left:8px}
+  .stats{display:flex;gap:22px;margin-left:auto;flex-wrap:wrap}
+  .stat{display:flex;flex-direction:column;gap:1px}
+  .stat b{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.1}
+  .stat i{font-style:normal;font-size:10.5px;text-transform:uppercase;
+          letter-spacing:.07em;color:var(--muted)}
+  main{flex:1;display:grid;grid-template-columns:minmax(300px,380px) 1fr;min-height:0}
+  .list{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0;
+        background:var(--panel)}
+  .tools{padding:10px 14px;border-bottom:1px solid var(--line-soft);display:flex;gap:8px}
+  input[type=search]{flex:1;padding:7px 10px;border:1px solid var(--line);border-radius:6px;
+    background:var(--bg);color:var(--ink);font:inherit;font-size:13px}
+  input[type=search]:focus{outline:2px solid var(--accent);outline-offset:-1px}
+  select{padding:7px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);
+    color:var(--ink);font:inherit;font-size:13px}
+  .rows{overflow-y:auto;flex:1}
+  .row{display:grid;grid-template-columns:4px 1fr auto;gap:11px;align-items:center;
+       padding:9px 14px 9px 0;border-bottom:1px solid var(--line-soft);cursor:pointer;
+       background:none;border-left:0;border-right:0;border-top:0;width:100%;text-align:left;
+       font:inherit;color:inherit}
+  .row:hover{background:var(--accent-soft)}
+  .row[aria-current=true]{background:var(--accent-soft)}
+  .row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  .sev{height:100%;min-height:34px;border-radius:0 2px 2px 0}
+  .row .nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .dm{font-family:var(--mono);font-size:11px;color:var(--muted);
+           overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .score{font-family:var(--mono);font-size:13px;font-weight:500;
+         font-variant-numeric:tabular-nums;padding-right:2px}
+  .detail{overflow-y:auto;padding:26px 30px 60px}
+  .empty{color:var(--muted);padding:60px 30px;max-width:46ch}
+  h1{font-size:21px;font-weight:600;margin:0 0 2px;letter-spacing:-.015em;text-wrap:balance}
+  .sub{font-family:var(--mono);font-size:12.5px;color:var(--muted);margin-bottom:20px}
+  .sub a{color:var(--accent)}
+  .gapbar{display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:8px;
+          background:var(--panel);border:1px solid var(--line);margin-bottom:22px}
+  .gapnum{font-family:var(--mono);font-size:30px;font-weight:500;line-height:1;
+          font-variant-numeric:tabular-nums}
+  .gaplabel{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+  .finding{font-size:14.5px;line-height:1.62;border-left:3px solid var(--accent);
+           padding:2px 0 2px 15px;margin:0 0 24px;max-width:74ch}
+  section{margin-bottom:24px}
+  h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);
+     font-weight:600;margin:0 0 9px;padding-bottom:6px;border-bottom:1px solid var(--line-soft)}
+  dl{display:grid;grid-template-columns:auto 1fr;gap:5px 20px;margin:0}
+  dt{color:var(--muted);font-size:13px}
+  dd{margin:0;font-size:13px}
+  .mono{font-family:var(--mono);font-size:12.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{background:var(--chip);border:1px solid var(--line-soft);border-radius:4px;
+        padding:2px 7px;font-family:var(--mono);font-size:11.5px}
+  .chip.bad{background:transparent;border-color:var(--crit);color:var(--crit)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .scroller{overflow-x:auto}
+  th{text-align:left;font-weight:500;color:var(--muted);font-size:11px;
+     text-transform:uppercase;letter-spacing:.05em;padding:0 12px 6px 0;white-space:nowrap}
+  td{padding:4px 12px 4px 0;border-top:1px solid var(--line-soft);font-family:var(--mono);
+     font-size:12px;white-space:nowrap}
+  td.wrap{white-space:normal;font-family:var(--sans)}
+  .tag{font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid currentColor}
+  .t-first{color:var(--muted)} .t-third{color:var(--crit)}
+  .verdict{padding:11px 14px;border-radius:7px;font-size:13.5px;margin-bottom:22px;
+           border:1px solid var(--line)}
+  .verdict.lead{background:var(--accent-soft);border-color:var(--accent)}
+  .verdict.no{background:var(--chip)}
+  @media (max-width:820px){
+    main{grid-template-columns:1fr}
+    .list{border-right:0;border-bottom:1px solid var(--line);max-height:38vh}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.4/babel.min.js"></script>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect} = React;
+const API = "";
+
+const sevColor = s =>
+  s >= 70 ? "var(--crit)" : s >= 40 ? "var(--warn)" : s > 0 ? "var(--ok)" : "var(--line)";
+const fmt = v => (v === null || v === undefined || v === "" ? "—" : String(v));
+const crore = v => v == null ? "—" : "₹" + (v/10000000).toFixed(2) + " cr";
+
+function Stat({n, label}){
+  return <div className="stat"><b>{n}</b><i>{label}</i></div>;
+}
+
+function CookieTable({rows}){
+  if (!rows || !rows.length) return <p style={{color:"var(--muted)"}}>No cookies set before consent.</p>;
+  const sorted = [...rows].sort((a,b)=>(b.lifetime_days||0)-(a.lifetime_days||0));
+  return (
+    <div className="scroller">
+      <table>
+        <thead><tr><th>Cookie</th><th>Set by</th><th>Party</th><th>Lifetime</th><th>Category</th></tr></thead>
+        <tbody>{sorted.map((c,i)=>(
+          <tr key={i}>
+            <td>{c.name}</td>
+            <td>{c.domain}</td>
+            <td><span className={"tag "+(c.party==="third"?"t-third":"t-first")}>{c.party}</span></td>
+            <td>{c.session ? "session" : (c.lifetime_days ?? "—") + "d"}</td>
+            <td>{c.category}</td>
+          </tr>))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Detail({cin}){
+  const [c,setC] = useState(null);
+  useEffect(()=>{ setC(null);
+    if(cin) fetch(`${API}/api/companies/${cin}`).then(r=>r.json()).then(setC); },[cin]);
+
+  if(!cin) return <div className="empty">Select a company to see everything the pipeline
+    recorded about it — the consent finding, every cookie set before consent, the data it
+    collects through forms, and the contact.</div>;
+  if(!c) return <div className="empty">Loading…</div>;
+
+  const isLead = !c.has_cmp && c.consent_gap_score > 0;
+  return (
+    <div>
+      <h1>{c.company_name}</h1>
+      <div className="sub">
+        <a href={"https://"+(c.final_domain||c.resolved_domain)} target="_blank" rel="noopener">
+          {c.final_domain||c.resolved_domain}</a>
+        {c.final_domain && c.resolved_domain && c.final_domain!==c.resolved_domain
+          && <> · redirected from {c.resolved_domain}</>} · {c.cin}
+      </div>
+
+      <div className="gapbar">
+        <div className="gapnum" style={{color:sevColor(c.consent_gap_score)}}>
+          {c.consent_gap_score ?? "—"}</div>
+        <div>
+          <div className="gaplabel">consent gap score</div>
+          <div style={{fontSize:13}}>
+            {c.has_cmp ? `Runs ${c.cmp_name} — not a lead`
+             : c.consent_gap_score >= 70 ? "Severe — trackers and no working consent"
+             : c.consent_gap_score >= 40 ? "Clear gap worth approaching"
+             : c.consent_gap_score > 0 ? "Minor gap" : "No measurable gap"}
+          </div>
+        </div>
+      </div>
+
+      <div className={"verdict "+(isLead?"lead":"no")}>
+        {isLead ? "LEAD — no consent platform, demonstrable gap"
+                : c.has_cmp ? "NOT A LEAD — already running a consent platform"
+                : "NOT A LEAD — nothing collected, nothing to fix"}
+      </div>
+
+      {c.consent_gap_summary &&
+        <section><h2>The finding</h2><p className="finding">{c.consent_gap_summary}</p></section>}
+
+      <section>
+        <h2>Cookies set before consent ({c.tracking_cookie_count ?? 0} of {c.cookies_total ?? 0})</h2>
+        <CookieTable rows={c.pre_consent_cookies}/>
+      </section>
+
+      <section>
+        <h2>Data collected through forms</h2>
+        {c.has_data_form ? (
+          <dl>
+            <dt>Fields</dt><dd className="chips">
+              {(c.form_field_types||[]).map(f=><span className="chip" key={f}>{f}</span>)}</dd>
+            <dt>Consent checkbox</dt>
+            <dd>{c.form_consent_checkbox ? "yes" :
+              <span style={{color:"var(--crit)"}}>none — collected without consent</span>}</dd>
+            <dt>Submitted to</dt><dd className="chips">
+              {(c.form_third_party_hosts||[]).length
+                ? c.form_third_party_hosts.map(h=><span className="chip bad" key={h}>{h}</span>)
+                : <span className="mono">their own server</span>}</dd>
+            {c.form_embed_provider && <><dt>Form provider</dt><dd>{c.form_embed_provider}</dd></>}
+          </dl>
+        ) : <p style={{color:"var(--muted)"}}>No data-collection form found.</p>}
+      </section>
+
+      <section>
+        <h2>Tracking installed</h2>
+        <div className="chips">
+          {[...(c.tech_analytics_tools||[]),...(c.tech_marketing_tools||[])].map(t=>
+            <span className="chip" key={t}>{t}</span>)}
+          {c.tech_cms && <span className="chip">{c.tech_cms}</span>}
+          {!(c.tech_analytics_tools||[]).length && !(c.tech_marketing_tools||[]).length
+            && !c.tech_cms && <span style={{color:"var(--muted)"}}>none detected</span>}
+        </div>
+      </section>
+
+      <section>
+        <h2>Contact</h2>
+        <dl>
+          <dt>Name</dt><dd>{fmt(c.contact_name)}</dd>
+          <dt>Title</dt><dd>{fmt(c.contact_title)}</dd>
+          <dt>Email</dt><dd>{c.contact_email ||
+            <span style={{color:"var(--muted)"}}>not revealed — Apollo free plan</span>}</dd>
+          <dt>Confidence</dt><dd>{fmt(c.title_match_confidence)}</dd>
+        </dl>
+      </section>
+
+      <section>
+        <h2>Company</h2>
+        <dl>
+          <dt>Scale</dt><dd>{fmt(c.business_scale)} {c.scale_confidence && `(${c.scale_confidence} confidence)`}</dd>
+          {c.scale_basis && <><dt>Based on</dt><dd>{c.scale_basis}</dd></>}
+          <dt>Industry</dt><dd>{fmt(c.linkedin_industry||c.industrial_classification)}</dd>
+          <dt>Employees</dt><dd>{fmt(c.linkedin_employee_count)}</dd>
+          <dt>Paid-up capital</dt><dd className="mono">{crore(c.paidup_capital)}</dd>
+          <dt>Registered</dt><dd className="mono">{fmt(c.registration_date)} · {fmt(c.reg_pin)}</dd>
+          {c.company_tagline && <><dt>Tagline</dt><dd>{c.company_tagline}</dd></>}
+          <dt>Matched by</dt><dd>{fmt(c.resolve_evidence)}</dd>
+        </dl>
+      </section>
+    </div>
+  );
+}
+
+function App(){
+  const [stats,setStats] = useState(null);
+  const [rows,setRows] = useState([]);
+  const [q,setQ] = useState("");
+  const [minScore,setMinScore] = useState(0);
+  const [sel,setSel] = useState(null);
+
+  useEffect(()=>{ fetch(`${API}/api/stats`).then(r=>r.json()).then(setStats); },[]);
+  useEffect(()=>{
+    const t = setTimeout(()=>{
+      fetch(`${API}/api/companies?q=${encodeURIComponent(q)}&min_score=${minScore}`)
+        .then(r=>r.json()).then(d=>{ setRows(d); if(!sel && d.length) setSel(d[0].cin); });
+    }, 180);
+    return ()=>clearTimeout(t);
+  },[q,minScore]);
+
+  return (<>
+    <header>
+      <div className="brand">Consiva<span>consent-gap pipeline</span></div>
+      {stats && <div className="stats">
+        <Stat n={stats.total.toLocaleString()} label="MCA loaded"/>
+        <Stat n={stats.analysed} label="analysed"/>
+        <Stat n={stats.with_gap} label="with a gap"/>
+        <Stat n={stats.severe} label="severe"/>
+        <Stat n={stats.has_cmp} label="already covered"/>
+        <Stat n={`${stats.form_consent}/${stats.with_form}`} label="forms asking consent"/>
+        <Stat n={stats.with_contact} label="contacts found"/>
+      </div>}
+    </header>
+    <main>
+      <div className="list">
+        <div className="tools">
+          <input type="search" placeholder="Search company or domain…"
+                 value={q} onChange={e=>setQ(e.target.value)} aria-label="Search"/>
+          <select value={minScore} onChange={e=>setMinScore(+e.target.value)} aria-label="Minimum score">
+            <option value="0">All</option>
+            <option value="1">With a gap</option>
+            <option value="40">40+</option>
+            <option value="70">Severe 70+</option>
+          </select>
+        </div>
+        <div className="rows">
+          {rows.map(r=>(
+            <button className="row" key={r.cin} aria-current={sel===r.cin}
+                    onClick={()=>setSel(r.cin)}>
+              <div className="sev" style={{background:sevColor(r.consent_gap_score)}}/>
+              <div style={{minWidth:0}}>
+                <div className="nm">{r.company_name}</div>
+                <div className="dm">{r.final_domain||r.resolved_domain}</div>
+              </div>
+              <div className="score" style={{color:sevColor(r.consent_gap_score)}}>
+                {r.has_cmp ? "CMP" : r.consent_gap_score}</div>
+            </button>))}
+          {!rows.length && <div className="empty">No companies match.</div>}
+        </div>
+      </div>
+      <div className="detail"><Detail cin={sel}/></div>
+    </main>
+  </>);
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

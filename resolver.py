@@ -29,9 +29,23 @@ from rapidfuzz import fuzz
 import fingerprints
 import llm
 
+# Stripped from the END of a name, longest first so "LIMITED LIABILITY
+# PARTNERSHIP" is removed whole rather than leaving "LIMITED LIABILITY" behind
+# after "PARTNERSHIP" fails to match.
 LEGAL_SUFFIXES = (
+    "LIMITED LIABILITY PARTNERSHIP",   # some LLPs spell it out in full
     "PRIVATE LIMITED", "PVT LTD", "PVT. LTD.", "PVT LIMITED", "P LTD",
-    "LIMITED", "LTD", "LTD.", "LLP", "AND COMPANY", "& COMPANY", "AND CO",
+    "LIMITED", "LTD", "LTD.", "LLP",
+    "AND COMPANY", "& COMPANY", "AND CO",
+)
+
+# Legal designations that appear ANYWHERE in a name, not just at the end.
+# "(OPC)" marks a One Person Company and "AND COMPANY" often sits mid-string
+# ("SAJJAN SINGH AND COMPANY ENTERPRISE") -- neither is part of the trading
+# name, and both produce domains nobody owns.
+INLINE_LEGAL_TERMS = (
+    "OPC", "ONE PERSON COMPANY", "LIMITED LIABILITY PARTNERSHIP",
+    "AND COMPANY", "& COMPANY",
 )
 STOPWORDS = {"THE", "INDIA", "INDIAN", "GROUP", "ENTERPRISES", "ENTERPRISE"}
 
@@ -47,11 +61,21 @@ TIER_STRONG, TIER_WEAK = 0, 1
 
 
 def clean_name(name):
-    out = re.sub(r"[^A-Za-z0-9 &]", " ", (name or "").upper())
+    upper = (name or "").upper()
+    # Drop parenthesised legal designations before punctuation is flattened,
+    # so "(OPC)" disappears instead of becoming the word "OPC".
+    upper = re.sub(r"\((?:OPC|ONE PERSON COMPANY)\)", " ", upper)
+
+    out = re.sub(r"[^A-Za-z0-9 &]", " ", upper)
     out = re.sub(r"\s+", " ", out).strip()
+
+    for term in INLINE_LEGAL_TERMS:
+        out = re.sub(rf"\b{re.escape(term)}\b", " ", out)
+    out = re.sub(r"\s+", " ", out).strip()
+
     for suffix in LEGAL_SUFFIXES:
         out = re.sub(rf"\s*{re.escape(suffix)}$", "", out).strip()
-    return out
+    return re.sub(r"\s+", " ", out).strip()
 
 
 def _acronym(words):
@@ -240,10 +264,24 @@ _DICTIONARY = _load_dictionary()
 # "shree" (43 companies), "shri" (27), "jai" (22) or "krishna" (12), yet none
 # of them can identify a company. Rebuild with build_generic_words.py.
 GENERIC_WORDS_PATH = Path(__file__).parent / "data" / "generic_first_words.json"
-# Genuinely generic words lead 9-43 companies in the registry; distinctive
-# brands that happen to have several registered entities (aisats: 4) lead only
-# a handful. 8 separates them cleanly.
-GENERIC_MIN_COMPANIES = 8
+# A word is generic when this many companies share it as their first word.
+#
+# An absolute count, deliberately: the question is "can this word identify ONE
+# company", and if 200 companies are called Royal-something then royal.com
+# identifies none of them, whatever size the corpus is. A share-based rule
+# looks scale-invariant but is not -- 78% of first words appear exactly once,
+# so a growing corpus grows the vocabulary faster than any individual word's
+# count, and the same generic word drifts below a fixed percentage.
+#
+# 200 is calibrated against the 1.44M-company metropolitan corpus, where it
+# catches every obviously generic word (shree, shri, sai, om, jai, maa, shiv,
+# bharat, krishna, royal, star, super, golden, global) while flagging none of
+# the real brands we have seen resolve correctly (livguard, nxtra, pestrail,
+# aisats, encalm, zealthix, kohinoor, repin). At 100 it starts eating
+# "kohinoor"; at 700 it starts missing "krishna".
+#
+# Rebuild and re-check the calibration if the corpus changes size materially.
+GENERIC_MIN_COMPANIES = 200
 
 
 def _load_generic_words():
@@ -341,7 +379,14 @@ def adjudicate(candidate, company, loc):
 
 # --- the resolution flow ----------------------------------------------------
 
-ACCEPT_SCORE = 60        # match_score at or above this is this company's site
+# match_score at or above this is accepted as this company's site.
+#
+# Raised from 60 after the metro batch: 54 of 56 accepts scored 80+, and both
+# rows in the 60-79 band were broad-sector matches rather than real ones --
+# AARTH CREATIVE STUDIOS accepted an accounting firm at 65 because both are
+# "Business Services". Costs ~4% of accepts and removes that whole class.
+# Volume is free at 1.4M records; a wrong domain is not.
+ACCEPT_SCORE = 80
 CORROBORATION_BONUS = 10 # registered PIN/district found on the page
 
 

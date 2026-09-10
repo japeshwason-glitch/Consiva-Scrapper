@@ -139,11 +139,14 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="probe but write nothing")
     ap.add_argument("--workers", type=int, default=MAX_WORKERS)
     ap.add_argument("--verbose", action="store_true", help="show every candidate scored")
+    ap.add_argument("--where", help="extra SQL filter, e.g. \"state_code='karnataka'\" "
+                                   "-- lets a run target one state or industry")
     ap.add_argument("--no-escalate", action="store_true",
                     help="skip the browser pass over bot-walled hosts")
     args = ap.parse_args()
 
-    companies = db.get_pending("discovered", limit=args.limit)
+    companies = db.get_pending("discovered", limit=args.limit,
+                               extra_where=args.where)
     if not companies:
         print("nothing at status='discovered'")
         return

@@ -137,8 +137,13 @@ def validate(df):
     report["missing CIN"] = int(no_cin.sum())
     df = df[~no_cin]
 
-    malformed = df["cin"].str.len() != 21
-    report["malformed CIN (not 21 chars)"] = int(malformed.sum())
+    # Companies carry a 21-character CIN; LLPs carry an LLPIN, which looks like
+    # "ACS-4781". Both are valid registry identifiers and both are real
+    # businesses with DPDP obligations -- a length check tuned to CINs alone
+    # silently dropped 310,656 LLPs (21% of the metropolitan corpus).
+    valid = df["cin"].str.fullmatch(r"[A-Z0-9]{21}|[A-Z]{2,4}-?\d{4,6}")
+    malformed = ~valid.fillna(False)
+    report["identifier is neither a CIN nor an LLPIN"] = int(malformed.sum())
     df = df[~malformed]
 
     no_name = df["company_name"].isna()

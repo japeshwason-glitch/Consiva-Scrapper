@@ -31,46 +31,125 @@ import db
 
 # CLAUDE.md's ladder: Founder/Co-founder > CEO > CTO > Head of Eng/Product >
 # Marketing Head.
+# Persona families from the CEO's ICP workbook. Title CLUSTERS, never exact
+# matches -- Indian job titles vary too much for that.
+#
+# Base scores say who generally decides. Industry shifts which family leads:
+# a SaaS company's CTO outranks its founder once a real technology function
+# exists, while a D2C brand is still founder-run.
 TITLE_PRIORITY = (
-    (("founder", "co-founder", "cofounder"), 100),
+    # Founder / CEO
+    (("founder", "co-founder", "cofounder", "promoter"), 100),
     (("chief executive", "ceo", "managing director", " md ", "mng director"), 95),
-    # Indian SMEs are usually run by a proprietor, partner or director rather
-    # than anyone with a C-title. The first pass scored only the C-suite and
-    # missed real decision-makers: NXTRA VIZAG had 25 contactable people and
-    # none matched, top of the list being "GM & ...".
-    (("proprietor", "partner", "owner", "promoter"), 90),
+    (("proprietor", "partner", "owner"), 90),
     (("director",), 85),
-    (("president", "vice president", " vp ", "avp"), 75),
-    (("general manager", " gm ", "gm&", "country manager", "business head"), 72),
-    (("chief technology", "cto", "chief information", "cio",
-      "chief operating", "coo", "chief marketing", "cmo",
-      "chief compliance", "chief data"), 70),
-    (("head of engineering", "head of product", "head of operations",
-      "head of technology", "head of it", "head of digital",
-      "head of marketing", "head of sales", "head of business"), 65),
-    (("vp engineering", "vp product", "vp marketing", "vp sales"), 62),
-    (("marketing head", "marketing manager", "digital marketing",
-      "brand manager", "ecommerce manager"), 58),
-    (("data protection officer", "dpo", "compliance", "legal head",
-      "company secretary"), 56),
+    # CTO / Technology
+    (("chief technology", "cto", "head of technology", "technology director",
+      "vp engineering", "head of engineering", "head it", "head of it"), 80),
+    # CIO / IT
+    (("chief information officer", "cio", "it director", "chief digital officer",
+      "chief digital"), 78),
+    # DPO / Privacy -- highest-relevance persona for this product
+    (("data protection officer", "dpo", "chief privacy officer", "privacy officer",
+      "head privacy", "head of privacy", "privacy lead"), 88),
+    # CISO / Security
+    (("chief information security", "ciso", "head infosec", "head of infosec",
+      "head cyber security", "head of cyber", "security director",
+      "chief security"), 76),
+    # Legal / Compliance
+    (("general counsel", "chief legal officer", "head legal", "head of legal",
+      "legal director", "legal head", "chief compliance", "head compliance",
+      "head of compliance", "compliance officer", "compliance manager",
+      "compliance head", "company secretary", "risk officer"), 74),
+    # COO / Operations
+    (("chief operating", "coo", "head operations", "head of operations",
+      "operations director"), 70),
+    # President / VP tier
+    (("president", "vice president", " vp ", "avp"), 68),
+    # General management
+    (("general manager", " gm ", "gm&", "country manager", "business head"), 66),
+    # Product / Digital
+    (("chief product officer", "vp product", "head product", "head of product",
+      "digital head", "head digital", "head of digital"), 64),
+    # Marketing -- owns the website and its tags at most SMEs
+    (("marketing head", "head of marketing", "vp marketing", "cmo",
+      "marketing manager", "digital marketing", "brand manager"), 60),
+    # HR / People -- employee-data owner
+    (("chro", "hr director", "head hr", "head of hr", "hr operations",
+      "people operations"), 52),
+    # IT operations
     (("it manager", "it head", "system administrator", "webmaster",
       "technical head", "plant head"), 48),
+    # Procurement -- gatekeeper, find after the primary buyer
+    (("chief procurement", "head procurement", "head of procurement",
+      "procurement director"), 40),
+    # Bare "CPO" is ambiguous -- the workbook uses it for Chief Product Officer
+    # AND Chief Procurement Officer, and it is also Chief Privacy Officer in the
+    # wild. Scored mid-range so it is reachable but never outranks an
+    # unambiguous title; the spelled-out forms above win on their own merits.
+    (("cpo",), 50),
     (("manager",), 35),          # last resort -- better than nobody
 )
 
-# Above this headcount the founder is unreachable and the person who actually
-# owns the website is the better target.
-LARGE_COMPANY_EMPLOYEES = 150
-LARGE_COMPANY_BOOST = ("marketing", "digital", "it ", "technology", "compliance",
-                       "legal", "data protection", "privacy")
+# Industry overlay. Values may be NEGATIVE: the workbook is explicit that in
+# regulated sectors the CIO/CISO leads and the founder does not, so a boost
+# alone is not enough -- an unqualified founder scores 100 and would still win.
+#
+# Demotion is safe because the ladder picks the best AVAILABLE person: if a
+# company has no CISO, the founder is still chosen. It only changes the outcome
+# when both exist, which is exactly when the workbook says it should.
+INDUSTRY_PERSONA_BOOST = {
+    # BFSI / Insurance: regulated override, CIO/CISO/compliance lead
+    "Finance": {
+        ("cio", "chief information officer", "ciso", "chief information security",
+         "compliance", "legal", "general counsel", "company secretary",
+         "risk officer", "data protection", "dpo"): 20,
+        ("founder", "co-founder", "chief executive", "ceo",
+         "managing director"): -18,
+    },
+    "Insurance": {
+        ("cio", "ciso", "chief information security", "compliance", "legal",
+         "data protection", "dpo"): 20,
+        ("founder", "co-founder", "chief executive", "ceo"): -18,
+    },
+    # SaaS / IT sits inside MCA's "Business Services": CTO outranks founder
+    # once a real technology function exists.
+    "Business Services": {
+        ("cto", "chief technology", "head of technology", "vp engineering"): 18,
+        ("founder", "co-founder", "chief executive", "ceo"): -8,
+    },
+    "Transport, storage and Communications": {
+        ("cio", "it director", "head of it", "it head", "chief information"): 12,
+    },
+    "Community, personal and Social Services": {
+        ("chief operating", "coo", "head operations"): 10,
+    },
+    # Owner-run sectors: leave the founder on top.
+    "Trading": {
+        ("founder", "chief executive", "ceo", "proprietor", "partner",
+         "director"): 8,
+    },
+}
 
 
-def title_score(title, employees):
+def title_score(title, employees, industry=None):
+    """
+    How good a target this person is. Industry shifts which persona family
+    leads -- a bank's CISO outranks its founder; a trading firm's owner does
+    not. Headcount still demotes founders at large companies where they are
+    unreachable, but it is optional now that LinkedIn enrichment is off.
+    """
     t = f" {(title or '').lower()} "
     score = 0
     for needles, points in TITLE_PRIORITY:
         if any(n in t for n in needles):
             score = max(score, points)
+
+    if score:   # never promote a title the ladder did not recognise at all
+        for needles, adjust in (INDUSTRY_PERSONA_BOOST.get(industry) or {}).items():
+            if any(n in t for n in needles):
+                score = max(0, score + adjust)
+                break
     if employees and employees >= LARGE_COMPANY_EMPLOYEES:
         if any(n in t for n in LARGE_COMPANY_BOOST):
             score += 25          # they own the website at this size
@@ -98,9 +177,11 @@ def choose(people, company):
     if not with_email:
         return None, None, f"{len(people)} people found, none with a verified email"
 
-    ranked = sorted(with_email, key=lambda p: -title_score(p.get("title"), employees))
+    industry = company.get("linkedin_industry") or company.get("industrial_classification")
+    ranked = sorted(with_email,
+                    key=lambda p: -title_score(p.get("title"), employees, industry))
     best = ranked[0]
-    if title_score(best.get("title"), employees) == 0:
+    if title_score(best.get("title"), employees, industry) == 0:
         return None, None, (f"{len(with_email)} contactable, none matching the title "
                             f"ladder (top: {best.get('title')!r})")
 

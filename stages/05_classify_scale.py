@@ -1,5 +1,5 @@
 """
-Stage 5: linkedin_done -> classified
+Stage 5: scraped -> classified
 Rule-based, free, instant. Combines paid-up capital + Apify employee count +
 NIC code into MSME / SMB / Startup / Enterprise.
 
@@ -81,13 +81,19 @@ def classify(company):
             scale = "Enterprise"
             signals.append("capital overrides headcount")
 
-    if scale is None and age is not None and age <= STARTUP_MAX_AGE_YEARS:
+    # Age only earns a "Startup" label when some size signal backs it up.
+    if (scale is None and age is not None and age <= STARTUP_MAX_AGE_YEARS
+            and (capital is not None or employees is not None)):
         if employees is None or employees < STARTUP_MAX_EMPLOYEES:
             scale = "Startup"
             signals.append(f"incorporated {age:.1f} years ago")
 
+    # LLPs carry no paid-up capital in MCA at all (0 of 308,053 rows) -- it is
+    # a companies concept. With LinkedIn enrichment off they have neither
+    # capital nor headcount, so age alone would label every recent LLP a
+    # "Startup" with false authority. Say we do not know instead.
     if scale is None:
-        scale = "MSME"
+        scale = "MSME" if capital is not None or employees is not None else "Unknown"
 
     if age is not None and scale != "Startup":
         signals.append(f"{age:.0f} years old")
@@ -104,7 +110,8 @@ def classify(company):
         confidence = "low" if near_boundary else "moderate"
     else:
         confidence = "low"
-        signals.append("no headcount or capital available")
+        signals.append("no headcount or capital available "
+                       "(LLPs have no paid-up capital in MCA)")
 
     return scale, confidence, "; ".join(signals)
 
@@ -115,9 +122,14 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    companies = db.get_pending("linkedin_done", limit=args.limit)
+    # Reads 'scraped' directly: stage 04 (Apify/LinkedIn) is out of the chain,
+    # so linkedin_employee_count is usually absent and classification runs on
+    # paid-up capital and NIC alone. scale_confidence says so honestly rather
+    # than implying a precision the inputs cannot support.
+    companies = db.get_pending("scraped", limit=args.limit,
+                               extra_where="has_cmp = false AND consent_gap_score > 0")
     if not companies:
-        print("nothing at status='linkedin_done'")
+        print("nothing at status='scraped' with a consent gap")
         return
     print(f"classifying {len(companies)} companies\n")
 

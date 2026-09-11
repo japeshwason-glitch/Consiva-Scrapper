@@ -21,6 +21,7 @@ confidence 85), and accepts ronaldweboffset.com (name + PIN 121004 + industry).
 """
 
 import json
+import logging
 import re
 from pathlib import Path
 
@@ -386,6 +387,8 @@ def adjudicate(candidate, company, loc):
 # AARTH CREATIVE STUDIOS accepted an accounting firm at 65 because both are
 # "Business Services". Costs ~4% of accepts and removes that whole class.
 # Volume is free at 1.4M records; a wrong domain is not.
+_FUZZY_FALLBACKS = 0    # counted so a run can report silent degradation
+
 ACCEPT_SCORE = 80
 CORROBORATION_BONUS = 10 # registered PIN/district found on the page
 
@@ -435,7 +438,15 @@ def resolve(company, fetch_fn, loc=None, max_candidates=6, log=None):
         score, reason = match_score_for(company, title, body)
         if score is None:
             # Model unreachable. Fall back to string similarity rather than
-            # silently rejecting every company during an outage.
+            # silently rejecting every company during an outage -- but make it
+            # LOUD. A silent degradation here accepts domains on name
+            # similarity alone, which is exactly the failure that put
+            # marvel.com in the lead list.
+            global _FUZZY_FALLBACKS
+            _FUZZY_FALLBACKS += 1
+            logging.warning("verifier unavailable, falling back to fuzzy match "
+                            "for %s (%d so far this run): %s",
+                            company.get("company_name"), _FUZZY_FALLBACKS, reason)
             score = name_axis(name, title, body)
             reason = f"[fuzzy fallback] {reason}"
 

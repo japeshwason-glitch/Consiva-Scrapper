@@ -145,3 +145,9 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS form_embed_provider  TEXT;
 
 -- LinkedIn company page URL, kept alongside the enrichment for audit.
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS linkedin_url TEXT;
+
+-- Set when the CRM has actually pulled a lead. Without it, an API consumer
+-- polling status='exported' re-reads the same rows forever.
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_companies_delivered ON companies(delivered_at)
+    WHERE delivered_at IS NULL;

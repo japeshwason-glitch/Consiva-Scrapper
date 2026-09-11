@@ -93,6 +93,43 @@ def company(cin: str):
     return record
 
 
+@app.get("/api/leads")
+def leads(limit: int = 200, include_delivered: bool = False):
+    """
+    The CRM handoff. Returns exported leads that have not been delivered yet,
+    oldest first, so an integration can poll this endpoint and never receive
+    the same lead twice.
+    """
+    where = "status = 'exported'"
+    if not include_delivered:
+        where += " AND delivered_at IS NULL"
+    with db.get_cursor() as cur:
+        cur.execute(f"""
+            SELECT cin, company_name, final_domain AS domain, business_scale,
+                   contact_name, contact_title, contact_email, contact_source,
+                   title_match_confidence, consent_gap_score, consent_gap_summary,
+                   company_tagline, reg_state, reg_pin,
+                   COALESCE(linkedin_industry, industrial_classification) AS industry
+            FROM companies WHERE {where}
+            ORDER BY updated_at ASC LIMIT %s""", (limit,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.post("/api/leads/delivered")
+def mark_delivered(cins: list[str]):
+    """
+    Called by the CRM once it has stored a batch. Idempotent: re-marking an
+    already-delivered lead is a no-op rather than an error.
+    """
+    if not cins:
+        return {"marked": 0}
+    with db.get_cursor() as cur:
+        cur.execute("""UPDATE companies SET delivered_at = NOW()
+                       WHERE cin = ANY(%s) AND status='exported'
+                         AND delivered_at IS NULL""", (cins,))
+        return {"marked": cur.rowcount}
+
+
 if UI_DIR.exists():
     app.mount("/assets", StaticFiles(directory=UI_DIR), name="assets")
 

@@ -80,13 +80,14 @@ def main():
     args = ap.parse_args()
 
     limit = 1 if args.test else args.limit
-    # Only genuine leads reach the CRM. A row with no consent gap has nothing
-    # to sell against and must never occupy a row in their table, whatever its
-    # pipeline status says.
+    # Only contactable leads reach the CRM: a real consent gap, no existing CMP,
+    # AND a named person. Enforced in the query rather than in a filter, so no
+    # code path can put a row in their table that sales cannot act on.
     leads = [c for c in db.get_pending(
                  "exported", limit=limit * 5,
                  extra_where="delivered_at IS NULL AND has_cmp = false "
-                             "AND consent_gap_score > 0")][:limit]
+                             "AND consent_gap_score > 0 "
+                             "AND contact_name IS NOT NULL")][:limit]
     if not leads:
         sys.exit("nothing at status='exported' waiting to be delivered")
 

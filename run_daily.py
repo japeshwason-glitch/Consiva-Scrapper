@@ -29,8 +29,26 @@ import db
 ROOT = Path(__file__).resolve().parent
 PY = str(ROOT / "venv" / "bin" / "python")
 
-DEFAULT_TARGET = 500          # leads delivered to the CRM
-DEFAULT_MAX_SCRAPES = 2000    # hard ceiling on websites scraped in a day
+DEFAULT_TARGET = 500          # contactable leads delivered to the CRM
+
+# Six workers, measured rather than guessed. The model's throughput curve:
+#
+#   workers   per-call   throughput   vs sequential
+#         1      2.20s      0.46/s          1.0x
+#         2      2.69s      0.74/s          1.6x
+#         4      4.31s      0.93/s          2.0x
+#         6      4.30s      1.29/s          2.8x   <- knee
+#         8      5.71s      1.29/s          2.8x
+#        12      8.66s      1.23/s          2.7x
+#
+# Past six, per-call latency keeps climbing while total throughput flattens and
+# then falls -- the extra parallelism is fully cancelled by each request getting
+# slower. Six is where the trade stops paying.
+#
+# Sequential costs 2.8x: 500 contactable leads would need ~20.6h of model time
+# against ~7.3h at six, leaving no margin for a slow batch.
+WORKERS = 6
+SCRAPE_CONCURRENCY = 6
 # Screening batch per cycle. Sized so a cycle is ~20 minutes: long enough to
 # amortise browser startup, short enough that a crash loses little.
 SCREEN_BATCH = 400
@@ -92,7 +110,7 @@ def run(stage, args, dry_run=False):
     return proc.returncode
 
 
-def cycle(dry_run):
+def cycle(dry_run, workers=WORKERS):
     """One pass through the pipeline. Each stage feeds the next."""
     # Screen new companies, best-yielding states first.
     if pending("discovered") > 0:
@@ -101,10 +119,12 @@ def cycle(dry_run):
                 continue
             run("02_resolve_domain.py",
                 ["--limit", str(SCREEN_BATCH // len(STATE_ORDER)),
-                 "--no-escalate", "--where", f"state_code='{state}'"], dry_run)
+                 "--no-escalate", "--workers", str(workers),
+                 "--where", f"state_code='{state}'"], dry_run)
 
     if pending("resolved") or dry_run:
-        run("03_scrape_playwright.py", ["--limit", "500", "--concurrency", "6"], dry_run)
+        run("03_scrape_playwright.py",
+            ["--limit", "500", "--concurrency", str(SCRAPE_CONCURRENCY)], dry_run)
     if pending("scraped", "has_cmp = false AND consent_gap_score > 0") or dry_run:
         run("05_classify_scale.py", ["--limit", "500"], dry_run)
     if pending("classified") or dry_run:
@@ -119,9 +139,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--target", type=int, default=DEFAULT_TARGET,
                     help="stop once this many leads have reached the CRM today")
-    ap.add_argument("--max-scrapes", type=int, default=DEFAULT_MAX_SCRAPES,
-                    help="hard ceiling on websites scraped today, whatever the "
-                         "lead count -- stops a bad day from crawling forever")
+    ap.add_argument("--workers", type=int, default=WORKERS,
+                    help="parallel workers per stage; 1 keeps the local model "
+                         "sequential, which is what it serves best")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--max-cycles", type=int, default=40)
@@ -130,13 +150,14 @@ def main():
     done = leads_today()
     if args.status:
         print(f"leads delivered today : {done}/{args.target}")
-        print(f"websites scraped today: {scraped_today()}/{args.max_scrapes}")
+        print(f"websites scraped today: {scraped_today()} (no cap)")
         print(f"queue: discovered {pending('discovered'):,} | resolved {pending('resolved')} "
               f"| scraped {pending('scraped')} | classified {pending('classified')} "
               f"| exported-undelivered {pending('exported', 'delivered_at IS NULL')}")
         return
 
-    print(f"target {args.target} leads/day, ceiling {args.max_scrapes} scrapes/day")
+    print(f"target {args.target} contactable leads/day, no scrape cap, "
+          f"{args.workers} worker(s)")
     print(f"{done} leads and {scraped_today()} scrapes already done today "
           f"({'resuming' if done or scraped_today() else 'starting fresh'})\n")
 
@@ -146,17 +167,13 @@ def main():
             print(f"\nTARGET MET: {done}/{args.target} leads delivered today")
             return
         scraped = scraped_today()
-        if scraped >= args.max_scrapes:
-            print(f"\nSCRAPE CEILING HIT: {scraped}/{args.max_scrapes} websites today "
-                  f"({done}/{args.target} leads). Stopping to avoid crawling all night.")
-            return
         if pending("discovered") == 0 and pending("resolved") == 0 \
                 and pending("scraped") == 0 and pending("classified") == 0:
             print("\nno work left in the queue")
             return
         print(f"cycle {i}  ({done}/{args.target} leads, "
-              f"{scraped}/{args.max_scrapes} scrapes)", flush=True)
-        cycle(args.dry_run)
+              f"{scraped} scraped today)", flush=True)
+        cycle(args.dry_run, args.workers)
         if args.dry_run:
             print("\ndry run — nothing executed")
             return

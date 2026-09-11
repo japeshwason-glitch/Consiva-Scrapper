@@ -22,7 +22,7 @@ import db
 
 RUN_AT = os.environ.get("RUN_AT", "02:00")
 TARGET = int(os.environ.get("DAILY_LEAD_TARGET", "500"))
-MAX_SCRAPES = int(os.environ.get("DAILY_MAX_SCRAPES", "2000"))
+
 
 
 def leads_today():
@@ -40,18 +40,18 @@ def next_run(now):
 
 def run_once():
     print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] starting daily run "
-          f"(target {TARGET}, scrape ceiling {MAX_SCRAPES})", flush=True)
+          f"(target {TARGET} contactable leads, no scrape cap)", flush=True)
     result = subprocess.run(
         [sys.executable, "-u", "run_daily.py",
-         "--target", str(TARGET), "--max-scrapes", str(MAX_SCRAPES)],
+         "--target", str(TARGET)],
         cwd=os.path.dirname(os.path.abspath(__file__)))
     print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] run finished rc={result.returncode}, "
           f"{leads_today()} leads delivered today", flush=True)
 
 
 def main():
-    print(f"scheduler up — daily at {RUN_AT}, target {TARGET} leads, "
-          f"ceiling {MAX_SCRAPES} scrapes", flush=True)
+    print(f"scheduler up — daily at {RUN_AT}, target {TARGET} contactable leads",
+          flush=True)
 
     # Catch-up on boot: if today's window has passed and the target is not met,
     # the machine was probably off for it.

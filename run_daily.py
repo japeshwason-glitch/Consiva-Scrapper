@@ -29,7 +29,8 @@ import db
 ROOT = Path(__file__).resolve().parent
 PY = str(ROOT / "venv" / "bin" / "python")
 
-DEFAULT_TARGET = 500
+DEFAULT_TARGET = 500          # leads delivered to the CRM
+DEFAULT_MAX_SCRAPES = 2000    # hard ceiling on websites scraped in a day
 # Screening batch per cycle. Sized so a cycle is ~20 minutes: long enough to
 # amortise browser startup, short enough that a crash loses little.
 SCREEN_BATCH = 400
@@ -42,6 +43,15 @@ def leads_today():
     with db.get_cursor() as cur:
         cur.execute("""SELECT COUNT(*) AS n FROM companies
                        WHERE delivered_at::date = CURRENT_DATE""")
+        return cur.fetchone()["n"]
+
+
+def scraped_today():
+    """Websites actually loaded in a browser today -- the expensive operation."""
+    with db.get_cursor() as cur:
+        cur.execute("""SELECT COUNT(*) AS n FROM companies
+                       WHERE consent_gap_score IS NOT NULL
+                         AND updated_at::date = CURRENT_DATE""")
         return cur.fetchone()["n"]
 
 
@@ -107,7 +117,11 @@ def cycle(dry_run):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--target", type=int, default=DEFAULT_TARGET)
+    ap.add_argument("--target", type=int, default=DEFAULT_TARGET,
+                    help="stop once this many leads have reached the CRM today")
+    ap.add_argument("--max-scrapes", type=int, default=DEFAULT_MAX_SCRAPES,
+                    help="hard ceiling on websites scraped today, whatever the "
+                         "lead count -- stops a bad day from crawling forever")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--max-cycles", type=int, default=40)
@@ -116,24 +130,32 @@ def main():
     done = leads_today()
     if args.status:
         print(f"leads delivered today : {done}/{args.target}")
+        print(f"websites scraped today: {scraped_today()}/{args.max_scrapes}")
         print(f"queue: discovered {pending('discovered'):,} | resolved {pending('resolved')} "
               f"| scraped {pending('scraped')} | classified {pending('classified')} "
               f"| exported-undelivered {pending('exported', 'delivered_at IS NULL')}")
         return
 
-    print(f"target {args.target}/day — {done} already delivered today "
-          f"({'resuming' if done else 'starting fresh'})\n")
+    print(f"target {args.target} leads/day, ceiling {args.max_scrapes} scrapes/day")
+    print(f"{done} leads and {scraped_today()} scrapes already done today "
+          f"({'resuming' if done or scraped_today() else 'starting fresh'})\n")
 
     for i in range(1, args.max_cycles + 1):
         done = leads_today()
         if done >= args.target:
             print(f"\nTARGET MET: {done}/{args.target} leads delivered today")
             return
+        scraped = scraped_today()
+        if scraped >= args.max_scrapes:
+            print(f"\nSCRAPE CEILING HIT: {scraped}/{args.max_scrapes} websites today "
+                  f"({done}/{args.target} leads). Stopping to avoid crawling all night.")
+            return
         if pending("discovered") == 0 and pending("resolved") == 0 \
                 and pending("scraped") == 0 and pending("classified") == 0:
             print("\nno work left in the queue")
             return
-        print(f"cycle {i}  ({done}/{args.target} delivered)", flush=True)
+        print(f"cycle {i}  ({done}/{args.target} leads, "
+              f"{scraped}/{args.max_scrapes} scrapes)", flush=True)
         cycle(args.dry_run)
         if args.dry_run:
             print("\ndry run — nothing executed")

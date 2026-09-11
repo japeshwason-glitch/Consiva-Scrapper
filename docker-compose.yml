@@ -1,0 +1,74 @@
+# Consiva lead pipeline — GB10 deployment.
+#
+#   docker compose up -d              start postgres + api + scheduler
+#   docker compose logs -f scheduler  watch a daily run
+#   docker compose run --rm pipeline python run_daily.py --status
+#
+# The model runs on the HOST (llama-server on :8080), not in a container, so it
+# keeps direct GPU access. Containers reach it via host.docker.internal, mapped
+# to the host gateway below — inside a container "localhost" is the container.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: consiva
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"   # host-only; 5432 may already be in use
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d consiva"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    env_file: .env.docker
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Runs once on every `up`, then exits. Idempotent: a no-op when the schema
+    # is current, so it is safe to leave in the startup path.
+    command: python migrate.py
+    restart: "no"
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env.docker
+    ports:
+      - "8012:8012"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8012/api/health')\""]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    env_file: .env.docker
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    # shm is tiny by default and Chromium crashes on it under concurrency.
+    shm_size: 1gb
+    command: python scheduler.py
+
+volumes:
+  pgdata:

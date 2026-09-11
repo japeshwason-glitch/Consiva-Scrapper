@@ -1,0 +1,13 @@
+[Unit]
+Description=Run the Consiva lead pipeline daily
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+# The important line for a machine that loses power: if the 02:00 window was
+# missed because the box was off, run as soon as it boots instead of skipping
+# the day. cron cannot do this.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

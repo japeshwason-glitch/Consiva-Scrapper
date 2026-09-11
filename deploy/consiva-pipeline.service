@@ -1,0 +1,24 @@
+[Unit]
+Description=Consiva lead pipeline — daily run
+# Needs the database and the local model server up first.
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=japesh
+WorkingDirectory=/home/japesh/Dev/consiva/scrapper
+ExecStart=/home/japesh/Dev/consiva/scrapper/venv/bin/python -u run_daily.py --target 500
+
+# A crash mid-run is safe: every stage is re-entrant and progress is derived
+# from the database, so restarting simply resumes.
+Restart=on-failure
+RestartSec=120
+# Cap the day's work so a stuck run cannot bleed into tomorrow's window.
+TimeoutStartSec=20h
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

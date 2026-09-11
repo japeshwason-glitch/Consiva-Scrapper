@@ -1,0 +1,21 @@
+[Unit]
+Description=Consiva pipeline API
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=japesh
+WorkingDirectory=/home/japesh/Dev/consiva/scrapper
+ExecStart=/home/japesh/Dev/consiva/scrapper/venv/bin/uvicorn api:app \
+          --host 0.0.0.0 --port 8000 --workers 2
+
+# The API is stateless -- restart it freely, it holds nothing the pipeline needs.
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

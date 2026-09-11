@@ -38,6 +38,14 @@ APIFY_API_TOKEN = os.environ.get("APIFY_API_TOKEN")
 # (free) to identify the right persona, but must NOT call people/match with
 # reveal_personal_emails -- that consumes paid credits this account does not
 # have. Flip when the account is upgraded.
+# CRM handoff target — the sales team's SQL Server, not ours.
+CRM_DB_HOST = os.environ.get("CRM_DB_HOST")
+CRM_DB_PORT = int(os.environ.get("CRM_DB_PORT") or 1433)
+CRM_DB_NAME = os.environ.get("CRM_DB_NAME")
+CRM_DB_USER = os.environ.get("CRM_DB_USER")
+CRM_DB_PASSWORD = os.environ.get("CRM_DB_PASSWORD")
+CRM_DB_TABLE = os.environ.get("CRM_DB_TABLE", "dbo.CRM_Scrapper")
+
 APOLLO_ALLOW_EMAIL_REVEAL = os.environ.get("APOLLO_ALLOW_EMAIL_REVEAL", "0") not in ("0", "false", "False", "")
 
 # Local llama.cpp server used for soft-field extraction in stage 03.

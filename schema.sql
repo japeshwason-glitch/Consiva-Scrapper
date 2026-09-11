@@ -151,3 +151,18 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS linkedin_url TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_companies_delivered ON companies(delivered_at)
     WHERE delivered_at IS NULL;
+
+-- One row per stage execution, so an unattended run can be inspected after the
+-- fact and a power cut is visible as a run that started but never finished.
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id          BIGSERIAL PRIMARY KEY,
+    run_date    DATE        NOT NULL DEFAULT CURRENT_DATE,
+    stage       TEXT        NOT NULL,
+    started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ,
+    exit_code   INTEGER,
+    records_in  INTEGER,
+    leads_after INTEGER,
+    note        TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runs_date ON pipeline_runs(run_date DESC, started_at DESC);

@@ -1,44 +1,154 @@
 """
-Read-only JSON API over the pipeline database, for the dashboard UI.
+Consiva pipeline API.
 
-    venv/bin/uvicorn api:app --reload --port 8000
+    venv/bin/uvicorn api:app --host 0.0.0.0 --port 8000
 
-Read-only by design: the dashboard shows what the pipeline found, it does not
-change pipeline state. All database access goes through db.py, same as the
-stage scripts.
+Three audiences, three groups of endpoints:
+
+  /api/leads*      the CRM integration — pull undelivered leads, mark them taken
+  /api/pipeline/*  operations — where today stands, run history, queue depth
+  /api/companies*  the dashboard — browse and inspect what was found
+
+Read-only over the pipeline's own state except for marking leads delivered.
+Running the pipeline is the scheduler's job (run_daily.py under systemd), not
+this service: a request-scoped background task dies with the process and has no
+restart semantics, which is exactly what a machine that loses power needs.
 """
 
-from fastapi import FastAPI, HTTPException
+from datetime import date
+from pathlib import Path
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
+from pydantic import BaseModel
 
+import config
 import db
 
-app = FastAPI(title="Consiva pipeline API")
+app = FastAPI(
+    title="Consiva pipeline",
+    description="Lead pipeline state, CRM handoff and operational status.",
+    version="1.0.0",
+)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
                    allow_headers=["*"])
 
-UI_DIR = Path(__file__).parent / "ui"
+UI_DIR = Path(__file__).resolve().parent / "ui"
 
-# A row whose domain was later rejected must not appear anywhere in the
-# dashboard: those are companies we could not confidently identify, and several
-# of them (marvel.com for MARVEL KING LIMITED) score highest of all precisely
+# A row whose domain was later rejected must never surface anywhere: those are
+# companies we could not confidently identify, and they score HIGHEST of all,
 # because a wrong domain is usually a big tracker-heavy site.
 LIVE = "status NOT IN ('discovered', 'resolve_failed')"
 
-LIST_COLUMNS = """
-    cin, company_name, resolved_domain, final_domain, consent_gap_score,
-    business_scale, has_cmp, cmp_name, status, tracking_cookie_count,
-    third_party_count, has_data_form, contact_name, contact_title,
-    industrial_classification, linkedin_employee_count
+LEAD_FIELDS = """
+    cin, company_name, final_domain AS domain, business_scale,
+    contact_name, contact_title, contact_email, contact_source,
+    title_match_confidence, consent_gap_score, consent_gap_summary,
+    company_tagline, reg_state, reg_pin, tracking_cookie_count,
+    third_party_count, has_data_form, form_field_types,
+    COALESCE(linkedin_industry, industrial_classification) AS industry
 """
 
 
-@app.get("/api/stats")
+class DeliveredRequest(BaseModel):
+    cins: list[str]
+
+
+# ---------------------------------------------------------------- CRM handoff
+
+@app.get("/api/leads", tags=["crm"])
+def leads(limit: int = Query(200, le=1000), include_delivered: bool = False):
+    """
+    Exported leads the CRM has not taken yet, oldest first. Poll this; every
+    lead appears exactly once unless you ask for delivered ones too.
+    """
+    where = "status = 'exported'"
+    if not include_delivered:
+        where += " AND delivered_at IS NULL"
+    with db.get_cursor() as cur:
+        cur.execute(f"SELECT {LEAD_FIELDS} FROM companies WHERE {where} "
+                    f"ORDER BY updated_at ASC LIMIT %s", (limit,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.post("/api/leads/delivered", tags=["crm"])
+def mark_delivered(body: DeliveredRequest):
+    """
+    Mark a batch as taken. Idempotent -- re-marking is a no-op, not an error,
+    so a retry after a network failure is safe.
+    """
+    if not body.cins:
+        return {"marked": 0}
+    with db.get_cursor() as cur:
+        cur.execute("""UPDATE companies SET delivered_at = NOW()
+                       WHERE cin = ANY(%s) AND status = 'exported'
+                         AND delivered_at IS NULL""", (body.cins,))
+        return {"marked": cur.rowcount}
+
+
+# ------------------------------------------------------------------ operations
+
+@app.get("/api/pipeline/status", tags=["ops"])
+def pipeline_status(target: int = 500):
+    """
+    Where today stands. `delivered_today` is COUNTED, never stored -- so it
+    stays correct across a crash or a restart mid-run.
+    """
+    with db.get_cursor() as cur:
+        cur.execute("SELECT status, COUNT(*) AS n FROM companies GROUP BY status")
+        queue = {r["status"]: r["n"] for r in cur.fetchall()}
+        cur.execute("""SELECT COUNT(*) AS n FROM companies
+                       WHERE delivered_at::date = CURRENT_DATE""")
+        today = cur.fetchone()["n"]
+        cur.execute("""SELECT COUNT(*) AS n FROM companies
+                       WHERE status='exported' AND delivered_at IS NULL""")
+        waiting = cur.fetchone()["n"]
+    return {
+        "date": date.today().isoformat(),
+        "delivered_today": today,
+        "target": target,
+        "remaining": max(0, target - today),
+        "awaiting_delivery": waiting,
+        "queue": queue,
+    }
+
+
+@app.get("/api/pipeline/runs", tags=["ops"])
+def runs(limit: int = Query(50, le=500), stage: Optional[str] = None):
+    """
+    Recent stage executions. A row with finished_at NULL is a run that started
+    and never completed -- which is what a power cut looks like from here.
+    """
+    where, params = "TRUE", []
+    if stage:
+        where, params = "stage = %s", [stage]
+    params.append(limit)
+    with db.get_cursor() as cur:
+        cur.execute(f"""SELECT id, run_date, stage, started_at, finished_at,
+                               exit_code, records_in, leads_after, note
+                        FROM pipeline_runs WHERE {where}
+                        ORDER BY started_at DESC LIMIT %s""", params)
+        return [dict(r) for r in cur.fetchall()]
+
+
+@app.get("/api/pipeline/throughput", tags=["ops"])
+def throughput(days: int = Query(14, le=90)):
+    """Leads delivered per day, for trend and capacity planning."""
+    with db.get_cursor() as cur:
+        cur.execute("""SELECT delivered_at::date AS day, COUNT(*) AS leads
+                       FROM companies
+                       WHERE delivered_at >= CURRENT_DATE - %s::int
+                       GROUP BY 1 ORDER BY 1 DESC""", (days,))
+        return [dict(r) for r in cur.fetchall()]
+
+
+# ------------------------------------------------------------------- dashboard
+
+@app.get("/api/stats", tags=["dashboard"])
 def stats():
-    """Headline numbers for the dashboard summary bar."""
     with db.get_cursor() as cur:
         cur.execute("SELECT COUNT(*) AS n FROM companies")
         total = cur.fetchone()["n"]
@@ -57,27 +167,28 @@ def stats():
     return row
 
 
-@app.get("/api/companies")
-def companies(q: str = "", min_score: int = 0, limit: int = 500):
-    """The list pane: one row per analysed company, worst gap first."""
+@app.get("/api/companies", tags=["dashboard"])
+def companies(q: str = "", min_score: int = 0, limit: int = Query(500, le=2000)):
     where = [LIVE, "consent_gap_score IS NOT NULL", "consent_gap_score >= %s"]
     params = [min_score]
     if q:
         where.append("(company_name ILIKE %s OR resolved_domain ILIKE %s)")
         params += [f"%{q}%", f"%{q}%"]
     params.append(limit)
-
     with db.get_cursor() as cur:
-        cur.execute(f"""SELECT {LIST_COLUMNS} FROM companies
-                        WHERE {' AND '.join(where)}
+        cur.execute(f"""SELECT cin, company_name, resolved_domain, final_domain,
+                               consent_gap_score, business_scale, has_cmp, cmp_name,
+                               status, tracking_cookie_count, third_party_count,
+                               has_data_form, contact_name, contact_title,
+                               industrial_classification, linkedin_employee_count
+                        FROM companies WHERE {' AND '.join(where)}
                         ORDER BY consent_gap_score DESC, company_name ASC
                         LIMIT %s""", params)
         return [dict(r) for r in cur.fetchall()]
 
 
-@app.get("/api/companies/{cin}")
+@app.get("/api/companies/{cin}", tags=["dashboard"])
 def company(cin: str):
-    """Everything the pipeline recorded about one company."""
     with db.get_cursor() as cur:
         cur.execute("SELECT * FROM companies WHERE cin = %s", (cin,))
         row = cur.fetchone()
@@ -87,52 +198,27 @@ def company(cin: str):
     for key in ("paidup_capital", "authorized_capital", "resolve_confidence"):
         if record.get(key) is not None:
             record[key] = float(record[key])
-    for key in ("created_at", "updated_at"):
+    for key in ("created_at", "updated_at", "delivered_at"):
         if record.get(key) is not None:
             record[key] = record[key].isoformat()
     return record
 
 
-@app.get("/api/leads")
-def leads(limit: int = 200, include_delivered: bool = False):
-    """
-    The CRM handoff. Returns exported leads that have not been delivered yet,
-    oldest first, so an integration can poll this endpoint and never receive
-    the same lead twice.
-    """
-    where = "status = 'exported'"
-    if not include_delivered:
-        where += " AND delivered_at IS NULL"
-    with db.get_cursor() as cur:
-        cur.execute(f"""
-            SELECT cin, company_name, final_domain AS domain, business_scale,
-                   contact_name, contact_title, contact_email, contact_source,
-                   title_match_confidence, consent_gap_score, consent_gap_summary,
-                   company_tagline, reg_state, reg_pin,
-                   COALESCE(linkedin_industry, industrial_classification) AS industry
-            FROM companies WHERE {where}
-            ORDER BY updated_at ASC LIMIT %s""", (limit,))
-        return [dict(r) for r in cur.fetchall()]
-
-
-@app.post("/api/leads/delivered")
-def mark_delivered(cins: list[str]):
-    """
-    Called by the CRM once it has stored a batch. Idempotent: re-marking an
-    already-delivered lead is a no-op rather than an error.
-    """
-    if not cins:
-        return {"marked": 0}
-    with db.get_cursor() as cur:
-        cur.execute("""UPDATE companies SET delivered_at = NOW()
-                       WHERE cin = ANY(%s) AND status='exported'
-                         AND delivered_at IS NULL""", (cins,))
-        return {"marked": cur.rowcount}
+@app.get("/api/health", tags=["ops"])
+def health():
+    """Liveness for the load balancer / systemd watchdog."""
+    try:
+        with db.get_cursor() as cur:
+            cur.execute("SELECT 1 AS ok")
+            cur.fetchone()
+        return {"status": "ok", "database": "up"}
+    except Exception as exc:
+        raise HTTPException(503, f"database unreachable: {exc}")
 
 
 if UI_DIR.exists():
     app.mount("/assets", StaticFiles(directory=UI_DIR), name="assets")
 
-    @app.get("/")
+    @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(UI_DIR / "index.html")

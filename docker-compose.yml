@@ -21,7 +21,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5433:5432"   # host-only; 5432 may already be in use
+      # Host-only, and the host port is configurable: 5432 and 5433 are often
+      # already taken. Set POSTGRES_HOST_PORT in .env.docker if this collides.
+      # Nothing in the stack needs this -- the API reaches postgres over the
+      # compose network by service name. It exists for psql and DBeaver.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5434}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d consiva"]
       interval: 10s

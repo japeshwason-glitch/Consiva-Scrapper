@@ -2,8 +2,13 @@
 venv/
 __pycache__/
 *.pyc
-data/raw/
-data/exports/
+# Ignore the CONTENTS but keep the directories, so a fresh clone has somewhere
+# to put the MCA CSV and the exports. Without this, the first scp into
+# data/raw/ fails with "No such file or directory".
+data/raw/*
+data/exports/*
+!data/raw/.gitkeep
+!data/exports/.gitkeep
 logs/*
 !logs/.gitkeep
 .env.docker

@@ -27,7 +27,10 @@ import config
 import db
 
 ROOT = Path(__file__).resolve().parent
-PY = str(ROOT / "venv" / "bin" / "python")
+# The interpreter running this file, so the stages inherit the same
+# environment. Locally that is venv/bin/python; in the container it is the
+# image's python and no venv exists.
+PY = sys.executable
 
 DEFAULT_TARGET = 500          # contactable leads delivered to the CRM
 

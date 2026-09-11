@@ -1,0 +1,34 @@
+[Unit]
+Description=Qwen3.6 35B A3B Llama Server
+After=network.target
+
+[Service]
+Type=simple
+User=gignaati
+WorkingDirectory=/home/gignaati/dbeaver/LLAMA_CPP/llama.cpp
+
+# --parallel 8 is what the pipeline needs. Without it llama.cpp serves one
+# request at a time, and the six workers in stage 02 and stage 03 simply queue
+# against each other -- measured at 0.46 calls/sec sequential against 1.29 at
+# six, so the concurrency is otherwise wasted.
+#
+# -c is the TOTAL context, divided across slots: 32768 / 8 = 4096 per slot.
+# The pipeline's largest prompt is ~1000 tokens (2-3.5k characters of page text
+# plus the system prompt), so 4096 leaves comfortable headroom. Raising
+# --parallel without raising -c shrinks every slot and will truncate prompts.
+ExecStart=/home/gignaati/dbeaver/LLAMA_CPP/llama.cpp/build/bin/llama-server \
+  -m /home/gignaati/dbeaver/MODELS_LLAMA_CPP/models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf \
+  -ngl 999 \
+  -c 32768 \
+  --parallel 8 \
+  --cont-batching \
+  -fa on \
+  --metrics \
+  --host 0.0.0.0 \
+  --port 8080
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

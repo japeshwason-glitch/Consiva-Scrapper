@@ -1,8 +1,10 @@
 # Consiva lead pipeline — GB10 deployment.
 #
-#   docker compose up -d              start postgres + api + scheduler
-#   docker compose logs -f scheduler  watch a daily run
-#   docker compose run --rm pipeline python run_daily.py --status
+#   docker compose up -d                      postgres + migrations + API only
+#   docker compose --profile pipeline up -d    ALSO start the daily scheduler
+#
+# The scheduler sits behind a profile so bringing the API up cannot accidentally
+# start crawling. Add the profile when you are ready to run the pipeline.
 #
 # The model runs on the HOST (llama-server on :8080), not in a container, so it
 # keeps direct GPU access. Containers reach it via host.docker.internal, mapped
@@ -41,6 +43,12 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env.docker
+    # Four worker processes. The API is I/O-bound on Postgres and each worker
+    # holds its own connection pool, so this is about concurrent requests, not
+    # CPU. Override with API_WORKERS.
+    command: >
+      sh -c "uvicorn api:app --host 0.0.0.0 --port 8012
+             --workers ${API_WORKERS:-4} --proxy-headers"
     ports:
       - "8012:8012"
     depends_on:
@@ -56,6 +64,7 @@ services:
 
   scheduler:
     build: .
+    profiles: ["pipeline"]      # only starts with --profile pipeline
     restart: unless-stopped
     env_file: .env.docker
     depends_on:

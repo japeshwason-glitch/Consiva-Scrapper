@@ -6,3 +6,5 @@ data/raw/
 data/exports/
 logs/*
 !logs/.gitkeep
+.env.docker
+.env.bak

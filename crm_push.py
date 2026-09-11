@@ -80,14 +80,15 @@ def main():
     args = ap.parse_args()
 
     limit = 1 if args.test else args.limit
-    # Only contactable leads reach the CRM: a real consent gap, no existing CMP,
-    # AND a named person. Enforced in the query rather than in a filter, so no
-    # code path can put a row in their table that sales cannot act on.
+    # A lead is a company with a demonstrable consent gap. ContactName may be
+    # NULL -- Apollo covers barely 10% of small Indian firms, and sales sources
+    # contacts via Lusha anyway. What must never reach their table is a company
+    # with nothing to sell against, so the gap and the absence of a CMP are
+    # enforced in the query itself.
     leads = [c for c in db.get_pending(
                  "exported", limit=limit * 5,
                  extra_where="delivered_at IS NULL AND has_cmp = false "
-                             "AND consent_gap_score > 0 "
-                             "AND contact_name IS NOT NULL")][:limit]
+                             "AND consent_gap_score > 0")][:limit]
     if not leads:
         sys.exit("nothing at status='exported' waiting to be delivered")
 

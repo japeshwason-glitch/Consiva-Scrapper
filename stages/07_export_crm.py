@@ -1,5 +1,5 @@
 """
-Stage 7: contact_done -> exported
+Stage 7: contact_done / contact_failed (with a gap) -> exported
 Pulls the 11 outward-facing fields only -- raw facts, no written hooks --
 into a CSV for the CRM person.
 
@@ -68,13 +68,21 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    companies = db.get_pending("contact_done", limit=args.limit)
+    # Both outcomes of stage 06 are exportable. A lead is a company with a
+    # consent gap; whether Apollo happened to hold a contact for it does not
+    # change that. Gating on contact_done alone exported 5 of 48 real leads,
+    # because Apollo has no record of most small Indian companies.
+    gap = "has_cmp = false AND consent_gap_score > 0"
+    companies = (db.get_pending("contact_done", limit=args.limit, extra_where=gap)
+                 + db.get_pending("contact_failed", limit=args.limit, extra_where=gap))
+    companies = companies[:args.limit]
     if not companies:
-        print("nothing at status='contact_done'")
+        print("nothing awaiting export (need a consent gap and no CMP)")
         return
 
     rows = [row_for(c) for c in companies]
     missing_email = sum(1 for r in rows if not r["contact_email"])
+    missing_contact = sum(1 for r in rows if not r["contact_name"])
 
     if args.dry_run:
         print(",".join(FIELDS))
@@ -93,6 +101,9 @@ def main():
         print(f"wrote {len(rows)} rows -> {path}")
         print("status counts:", db.count_by_status())
 
+    if missing_contact:
+        print(f"NOTE: {missing_contact} of {len(rows)} rows have no contact name "
+              f"(Apollo has no record of them -- sales sources via Lusha)")
     if missing_email:
         print(f"NOTE: {missing_email} of {len(rows)} rows have no contact_email "
               f"(Apollo free plan -- reveal disabled)")

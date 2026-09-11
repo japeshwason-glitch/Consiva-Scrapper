@@ -1,6 +1,9 @@
 # Playwright's own image: it ships Chromium plus every system library the
 # browser needs. Building on python:slim means chasing ~40 apt packages by hand.
-FROM mcr.microsoft.com/playwright/python:v1.62.0-jammy
+# noble, not jammy: jammy ships Python 3.10 and several pinned dependencies
+# (rapidfuzz 3.14.6, pandas 3.x) require >=3.11. noble gives 3.12, matching the
+# development machine.
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 
 WORKDIR /app
 

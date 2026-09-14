@@ -53,7 +53,13 @@ STOPWORDS = {"THE", "INDIA", "INDIAN", "GROUP", "ENTERPRISES", "ENTERPRISE"}
 # Appended by Indian SMEs surprisingly often; cheap to try, one DNS lookup each.
 SME_DOMAIN_SUFFIXES = ("india", "group", "industries", "exports", "overseas", "co")
 
-TLD_PRIORITY = (".com", ".in", ".co.in", ".net.in", ".org.in", ".biz")
+# Measured over 527 resolved domains: .com 60.0%, .in 29.2%, .co.in 8.9% --
+# 98.1% between them. .biz, .net.in and .org.in produced 10 domains in total.
+# Carrying them doubles the DNS probes per company (six TLDs instead of three,
+# 60-72 hostnames instead of 30-36), and that volume is what got the pipeline
+# rate-limited by public resolvers. The trade is 1.9% of resolutions for half
+# the lookups and roughly half the stage-02 wall clock.
+TLD_PRIORITY = (".com", ".in", ".co.in")
 
 # Tier 0 slugs use two or more words of the company name. Tier 1 slugs are a
 # single word -- measured at 70% of all wrong domains but still 38% of correct

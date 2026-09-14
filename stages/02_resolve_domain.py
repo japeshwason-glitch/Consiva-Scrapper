@@ -159,12 +159,12 @@ def main():
     print(f"resolving {len(companies)} companies "
           f"(accept at match_score >= {resolver.ACCEPT_SCORE})\n")
 
-    resolved = failed = duplicate = done = skipped_dns = 0
+    resolved = failed = duplicate = done = skipped_dns = no_site = 0
     claimed = {}
     blocked_companies = []
 
     def record(company, winner, reason, escalated=False):
-        nonlocal resolved, failed, duplicate, skipped_dns
+        nonlocal resolved, failed, duplicate, skipped_dns, no_site
         name = company["company_name"][:42]
 
         if winner is None:
@@ -183,8 +183,19 @@ def main():
                 return
             failed += 1
             print(f"  none  {name:<44} {reason[:64]}", flush=True)
-            if not args.dry_run:
-                db.mark_failed(company["cin"], "resolve", reason[:400])
+            if args.dry_run:
+                return
+            if reason.startswith("no candidate hostname"):
+                # Every generated candidate answered NXDOMAIN. That is a real
+                # answer, not a flake, so it is terminal on the first attempt:
+                # retrying spends throughput on a question already answered.
+                # These are the companies whose site cannot be guessed from the
+                # registered name -- the worklist for a search-based pass.
+                no_site += 1
+                db.advance_status(company["cin"], "no_site_found",
+                                  last_error=reason[:400])
+                return
+            db.mark_failed(company["cin"], "resolve", reason[:400])
             return
 
         # Group companies share a website; only one should reach the paid stages.
@@ -260,6 +271,10 @@ def main():
 
     print(f"\nresolved {resolved}, duplicate-domain {duplicate}, "
           f"no site found {failed} of {len(companies)}")
+    if no_site:
+        print(f"{no_site} compan(ies) marked 'no_site_found' -- no candidate "
+              f"hostname exists in DNS. Export them with:\n"
+              f"  python export_no_site.py")
     if skipped_dns:
         print(f"NOTE: {skipped_dns} compan(ies) skipped -- their lookups could not "
               f"be completed. Left at 'discovered' with no retry charged.")

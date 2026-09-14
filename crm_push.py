@@ -20,6 +20,7 @@ import pymssql
 
 import config
 import db
+import resolver
 
 # Their column -> how we fill it. CookieBanner and CollectsViaForm are
 # nvarchar, not flags, so they carry a readable phrase rather than 0/1.
@@ -77,6 +78,11 @@ def main():
     ap.add_argument("--test", action="store_true",
                     help="insert one row and read it back, to prove the connection")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--allow-unverified", action="store_true",
+                    help="also send leads resolved before the identity check "
+                         "existed (resolve_match_score IS NULL). Off by "
+                         "default: those are the rows that matched the wrong "
+                         "company entirely.")
     args = ap.parse_args()
 
     limit = 1 if args.test else args.limit
@@ -85,10 +91,16 @@ def main():
     # contacts via Lusha anyway. What must never reach their table is a company
     # with nothing to sell against, so the gap and the absence of a CMP are
     # enforced in the query itself.
+    # The domain must also have been confirmed to belong to this company.
+    # Wrong domains score HIGHEST on the gap -- a big tracker-heavy site
+    # unrelated to the company outscores the company's own small site -- so
+    # without this they sort to the front of the queue and go out first.
+    verified = "" if args.allow_unverified else \
+               f" AND resolve_match_score >= {resolver.ACCEPT_SCORE}"
     leads = [c for c in db.get_pending(
                  "exported", limit=limit * 5,
                  extra_where="delivered_at IS NULL AND has_cmp = false "
-                             "AND consent_gap_score > 0")][:limit]
+                             "AND consent_gap_score > 0" + verified)][:limit]
     if not leads:
         sys.exit("nothing at status='exported' waiting to be delivered")
 

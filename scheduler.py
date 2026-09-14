@@ -40,7 +40,7 @@ def next_run(now):
 
 def run_once():
     print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] starting daily run "
-          f"(target {TARGET} contactable leads, no scrape cap)", flush=True)
+          f"(target {TARGET} leads, no scrape cap)", flush=True)
     result = subprocess.run(
         [sys.executable, "-u", "run_daily.py",
          "--target", str(TARGET)],
@@ -50,7 +50,7 @@ def run_once():
 
 
 def main():
-    print(f"scheduler up — daily at {RUN_AT}, target {TARGET} contactable leads",
+    print(f"scheduler up — daily at {RUN_AT}, target {TARGET} leads",
           flush=True)
 
     # Catch-up on boot: if today's window has passed and the target is not met,

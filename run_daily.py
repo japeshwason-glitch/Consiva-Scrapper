@@ -32,7 +32,8 @@ ROOT = Path(__file__).resolve().parent
 # image's python and no venv exists.
 PY = sys.executable
 
-DEFAULT_TARGET = 500          # contactable leads delivered to the CRM
+DEFAULT_TARGET = 500          # leads delivered to the CRM: a company with a
+                              # consent gap, contact name or not
 
 # Six workers, measured rather than guessed. The model's throughput curve:
 #
@@ -48,7 +49,7 @@ DEFAULT_TARGET = 500          # contactable leads delivered to the CRM
 # then falls -- the extra parallelism is fully cancelled by each request getting
 # slower. Six is where the trade stops paying.
 #
-# Sequential costs 2.8x: 500 contactable leads would need ~20.6h of model time
+# Sequential costs 2.8x: 500 leads would need ~20.6h of model time
 # against ~7.3h at six, leaving no margin for a slow batch.
 WORKERS = 6
 SCRAPE_CONCURRENCY = 6
@@ -132,7 +133,13 @@ def cycle(dry_run, workers=WORKERS):
         run("05_classify_scale.py", ["--limit", "500"], dry_run)
     if pending("classified") or dry_run:
         run("06_enrich_contact_apollo.py", ["--limit", "500"], dry_run)
-    if pending("contact_done") or dry_run:
+    # Stage 07 exports contact_done AND contact_failed -- a company with a
+    # consent gap is a lead whether or not Apollo had a person for it, and
+    # Apollo returns nothing for most small Indian firms. Gating on
+    # contact_done alone means a cycle where every lookup misses exports
+    # nothing at all, which is the same bug stage 07 itself was fixed for.
+    gap = "has_cmp = false AND consent_gap_score > 0"
+    if pending("contact_done", gap) or pending("contact_failed", gap) or dry_run:
         run("07_export_crm.py", [], dry_run)
     if pending("exported", "delivered_at IS NULL") or dry_run:
         run("crm_push.py", ["--limit", "500"], dry_run)
@@ -159,7 +166,7 @@ def main():
               f"| exported-undelivered {pending('exported', 'delivered_at IS NULL')}")
         return
 
-    print(f"target {args.target} contactable leads/day, no scrape cap, "
+    print(f"target {args.target} leads/day, no scrape cap, "
           f"{args.workers} worker(s)")
     print(f"{done} leads and {scraped_today()} scrapes already done today "
           f"({'resuming' if done or scraped_today() else 'starting fresh'})\n")

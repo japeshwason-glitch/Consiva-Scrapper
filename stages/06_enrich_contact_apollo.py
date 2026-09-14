@@ -217,6 +217,15 @@ def main():
         name = company["company_name"][:36]
         try:
             people, total = apollo_client.search_people(domain)
+        except apollo_client.ApolloBudgetExhausted as exc:
+            # The day's allowance is gone. Every company still in the list is
+            # untouched at 'classified' and carries no retry charge, so the
+            # next run picks up exactly here. Marking them failed would spend
+            # their retries on our quota rather than on anything about them.
+            print(f"\nSTOPPING: {str(exc)[:150]}", flush=True)
+            print(f"  {len(companies) - (found + missing + failed)} compan(ies) "
+                  f"left at 'classified' for the next run", flush=True)
+            break
         except apollo_client.ApolloUnavailable as exc:
             failed += 1
             print(f"  FAIL  {name:<38} {str(exc)[:60]}", flush=True)

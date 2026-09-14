@@ -520,6 +520,8 @@ class DNSUnavailable(RuntimeError):
 # near 10 would abort a whole run on one company's worth of a two-second blip.
 # At 200, roughly three consecutive companies have gone entirely unasked.
 DNS_OUTAGE_STREAK = 200
+DNS_RETRIES = 3          # attempts before a lookup counts as unanswered
+DNS_BACKOFF = 0.4        # seconds, doubled each attempt
 _EAI_AGAIN_STREAK = 0
 
 
@@ -527,29 +529,40 @@ def _dns_ok(host):
     """
     True if the host resolves, False if the resolver says it does not exist.
 
-    EAI_AGAIN is neither: it means we could not ask. That is the errno seen
-    when systemd-resolved is flapping between upstream servers, and treating
-    it as absence sends live companies to resolve_failed.
+    EAI_AGAIN is neither: it means we could not ask. It is what a flapping
+    systemd-resolved returns, and what a public resolver returns when it is
+    rate-limiting us -- and one company probes 60+ mostly-nonexistent
+    hostnames, so we generate exactly the traffic shape that triggers that.
+    Treating it as absence sends live companies to resolve_failed, so it is
+    retried with backoff and then raised, never reported as "no such domain".
     """
     global _EAI_AGAIN_STREAK
     import socket
-    try:
-        socket.getaddrinfo(host, None)
-        _EAI_AGAIN_STREAK = 0
-        return True
-    except socket.gaierror as exc:
-        if exc.errno == socket.EAI_AGAIN:
-            _EAI_AGAIN_STREAK += 1
-            if _EAI_AGAIN_STREAK >= DNS_OUTAGE_STREAK:
-                raise DNSUnavailable(
-                    f"{_EAI_AGAIN_STREAK} consecutive lookups failed with "
-                    f"'temporary failure in name resolution' (last: {host}). "
-                    f"The resolver is down, not the domains.") from exc
-            raise _TransientDNS(host) from exc
-        _EAI_AGAIN_STREAK = 0
-        return False
-    except UnicodeError:
-        return False
+    import time
+
+    last = None
+    for attempt in range(DNS_RETRIES):
+        try:
+            socket.getaddrinfo(host, None)
+            _EAI_AGAIN_STREAK = 0
+            return True
+        except UnicodeError:
+            return False
+        except socket.gaierror as err:
+            last = err
+            if err.errno != socket.EAI_AGAIN:
+                _EAI_AGAIN_STREAK = 0
+                return False
+            if attempt < DNS_RETRIES - 1:
+                time.sleep(DNS_BACKOFF * (2 ** attempt))
+
+    _EAI_AGAIN_STREAK += 1
+    if _EAI_AGAIN_STREAK >= DNS_OUTAGE_STREAK:
+        raise DNSUnavailable(
+            f"{_EAI_AGAIN_STREAK} consecutive lookups failed with 'temporary "
+            f"failure in name resolution' after {DNS_RETRIES} attempts each "
+            f"(last: {host}). The resolver is down, not the domains.") from last
+    raise _TransientDNS(host) from last
 
 
 class _TransientDNS(RuntimeError):

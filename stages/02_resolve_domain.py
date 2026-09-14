@@ -137,6 +137,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit", type=int, default=50)
     ap.add_argument("--dry-run", action="store_true", help="probe but write nothing")
+    ap.add_argument("--sample", action="store_true",
+                    help="draw a random spread across the whole corpus instead "
+                         "of working through it in ingest order. Use this to "
+                         "measure funnel rates: the default order returns one "
+                         "state at a time, so a batch is not representative.")
     ap.add_argument("--workers", type=int, default=MAX_WORKERS)
     ap.add_argument("--verbose", action="store_true", help="show every candidate scored")
     ap.add_argument("--where", help="extra SQL filter, e.g. \"state_code='karnataka'\" "
@@ -146,7 +151,8 @@ def main():
     args = ap.parse_args()
 
     companies = db.get_pending("discovered", limit=args.limit,
-                               extra_where=args.where)
+                               extra_where=args.where,
+                               order="random()" if args.sample else None)
     if not companies:
         print("nothing at status='discovered'")
         return

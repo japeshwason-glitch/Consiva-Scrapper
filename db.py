@@ -105,7 +105,10 @@ def get_cursor(cursor_factory=psycopg2.extras.RealDictCursor):
             yield cur
 
 
-def get_pending(status, limit=100, extra_where=None, extra_params=()):
+_ALLOWED_ORDERS = {"random()", "updated_at ASC", "updated_at DESC"}
+
+
+def get_pending(status, limit=100, extra_where=None, extra_params=(), order=None):
     """
     Fetch up to `limit` rows sitting at the given status, oldest-updated first
     (so a row that failed and got requeued doesn't get stuck behind new ones
@@ -113,13 +116,24 @@ def get_pending(status, limit=100, extra_where=None, extra_params=()):
     consent-gap check before Apify runs: extra_where="has_cmp = false"
 
     has_cmp is a native BOOLEAN -- filter on true/false, never 0/1.
+
+    `order` overrides the ordering. Pass "random()" to draw a spread across the
+    whole corpus instead of working through it in ingest order -- the default
+    walks state by state, because a bulk insert gives every row the same
+    updated_at and ties break on physical order.
     """
     query = "SELECT * FROM companies WHERE status = %s"
     params = [status]
     if extra_where:
         query += f" AND {extra_where}"
         params.extend(extra_params)
-    query += " ORDER BY updated_at ASC LIMIT %s"
+    if order:
+        # Interpolated, so it is restricted to a fixed set rather than trusted.
+        if order not in _ALLOWED_ORDERS:
+            raise ValueError(f"order must be one of {sorted(_ALLOWED_ORDERS)}, got {order!r}")
+        query += f" ORDER BY {order} LIMIT %s"
+    else:
+        query += " ORDER BY updated_at ASC LIMIT %s"
     params.append(limit)
 
     with get_cursor() as cur:

@@ -406,11 +406,18 @@ def resolve(company, fetch_fn, loc=None, max_candidates=6, log=None):
     name = company["company_name"]
     loc = loc if loc is not None else {"pin": None, "state": None, "locations": []}
     examined, fetched = [], 0
+    transient_dns = 0
 
     for host, tld, tier, priority in candidate_hosts(name):
         if fetched >= max_candidates:
             break
-        if not _dns_ok(host):
+        try:
+            if not _dns_ok(host):
+                continue
+        except _TransientDNS:
+            # Could not ask about this candidate. Say so rather than letting
+            # its silence count as a point against the company.
+            transient_dns += 1
             continue
         got = fetch_fn(host)
         if not got:
@@ -465,6 +472,11 @@ def resolve(company, fetch_fn, loc=None, max_candidates=6, log=None):
             log(f"      {host:<38} {score:>3}  {reason[:70]}")
 
     if not examined:
+        if transient_dns:
+            # Every candidate we could have learned from went unasked. This is
+            # not evidence that the company has no website.
+            return None, (f"DNS_UNAVAILABLE: {transient_dns} candidate lookup(s) "
+                          f"could not be completed"), []
         return None, "no candidate hostname resolved in DNS or returned a page", []
 
     scored = [c for c in examined if c.get("score") is not None]
@@ -494,10 +506,51 @@ def match_score_for(company, title, body):
     )
 
 
+class DNSUnavailable(RuntimeError):
+    """
+    The local resolver is failing, so nothing it says is evidence about any
+    domain. Raised rather than returned because a caller that treats this as
+    "no website" writes a permanent verdict from a temporary outage.
+    """
+
+
+# Consecutive EAI_AGAIN results that mean the resolver is down rather than the
+# domains being absent. This counts CANDIDATE lookups, and one company probes
+# 60-70 candidates, so the threshold has to clear several companies: anything
+# near 10 would abort a whole run on one company's worth of a two-second blip.
+# At 200, roughly three consecutive companies have gone entirely unasked.
+DNS_OUTAGE_STREAK = 200
+_EAI_AGAIN_STREAK = 0
+
+
 def _dns_ok(host):
+    """
+    True if the host resolves, False if the resolver says it does not exist.
+
+    EAI_AGAIN is neither: it means we could not ask. That is the errno seen
+    when systemd-resolved is flapping between upstream servers, and treating
+    it as absence sends live companies to resolve_failed.
+    """
+    global _EAI_AGAIN_STREAK
     import socket
     try:
         socket.getaddrinfo(host, None)
+        _EAI_AGAIN_STREAK = 0
         return True
-    except (socket.gaierror, UnicodeError):
+    except socket.gaierror as exc:
+        if exc.errno == socket.EAI_AGAIN:
+            _EAI_AGAIN_STREAK += 1
+            if _EAI_AGAIN_STREAK >= DNS_OUTAGE_STREAK:
+                raise DNSUnavailable(
+                    f"{_EAI_AGAIN_STREAK} consecutive lookups failed with "
+                    f"'temporary failure in name resolution' (last: {host}). "
+                    f"The resolver is down, not the domains.") from exc
+            raise _TransientDNS(host) from exc
+        _EAI_AGAIN_STREAK = 0
         return False
+    except UnicodeError:
+        return False
+
+
+class _TransientDNS(RuntimeError):
+    """One lookup we could not complete. Skips the candidate, not the company."""

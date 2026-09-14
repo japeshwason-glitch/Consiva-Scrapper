@@ -153,12 +153,12 @@ def main():
     print(f"resolving {len(companies)} companies "
           f"(accept at match_score >= {resolver.ACCEPT_SCORE})\n")
 
-    resolved = failed = duplicate = done = 0
+    resolved = failed = duplicate = done = skipped_dns = 0
     claimed = {}
     blocked_companies = []
 
     def record(company, winner, reason, escalated=False):
-        nonlocal resolved, failed, duplicate
+        nonlocal resolved, failed, duplicate, skipped_dns
         name = company["company_name"][:42]
 
         if winner is None:
@@ -167,6 +167,13 @@ def main():
             if reason.startswith("BLOCKED:") and not escalated:
                 blocked_companies.append(company)
                 print(f"  wall  {name:<44} {reason[:64]}", flush=True)
+                return
+            if reason.startswith("DNS_UNAVAILABLE:"):
+                # We never got to ask about this company. Charging it a retry
+                # would spend its three lives on our own broken resolver, and
+                # during an outage that happens to every company at once.
+                skipped_dns += 1
+                print(f"  dns?  {name:<44} {reason[:64]}", flush=True)
                 return
             failed += 1
             print(f"  none  {name:<44} {reason[:64]}", flush=True)
@@ -207,6 +214,12 @@ def main():
             company = futures[future]
             try:
                 winner, reason, _ = future.result()
+            except resolver.DNSUnavailable as exc:
+                print(f"\nABORTING: {exc}", flush=True)
+                print("No company was marked failed. Fix DNS and re-run; "
+                      "every row is still at 'discovered'.", flush=True)
+                pool.shutdown(wait=False, cancel_futures=True)
+                sys.exit(75)   # EX_TEMPFAIL -- the work is retryable
             except Exception as exc:
                 winner, reason = None, f"{type(exc).__name__}: {str(exc)[:180]}"
             record(company, winner, reason)
@@ -227,6 +240,12 @@ def main():
                 loc = location.parse(company.get("registered_address"))
                 try:
                     winner, reason, _ = resolver.resolve(company, browser_fetch, loc=loc)
+                except resolver.DNSUnavailable as exc:
+                    # Same rule as the main pass: a broken resolver is not a
+                    # verdict. Stop here rather than charging retries to the
+                    # companies we have not reached yet.
+                    print(f"\nABORTING escalation: {exc}", flush=True)
+                    break
                 except Exception as exc:
                     winner, reason = None, f"{type(exc).__name__}: {str(exc)[:150]}"
                 record(company, winner, reason, escalated=True)
@@ -235,6 +254,9 @@ def main():
 
     print(f"\nresolved {resolved}, duplicate-domain {duplicate}, "
           f"no site found {failed} of {len(companies)}")
+    if skipped_dns:
+        print(f"NOTE: {skipped_dns} compan(ies) skipped -- their lookups could not "
+              f"be completed. Left at 'discovered' with no retry charged.")
     if args.dry_run:
         print("dry run -- nothing written")
     else:

@@ -76,6 +76,18 @@ services:
         condition: service_completed_successfully
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    # Resolve website lookups against public DNS rather than the office
+    # gateway. systemd-resolved on the LAN was measured flapping between
+    # 172.16.10.1, 8.8.8.8 and 8.8.4.4 every ~15s, and a lookup that fails
+    # with EAI_AGAIN during a flap used to be recorded as "this company has
+    # no website" -- permanently, after three such failures.
+    #
+    # This does not affect service discovery: compose puts these containers on
+    # a user-defined network where Docker's embedded resolver (127.0.0.11)
+    # still answers for "postgres"; only external names are forwarded here.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

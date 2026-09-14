@@ -71,9 +71,6 @@ services:
     profiles: ["pipeline"]      # only starts with --profile pipeline
     restart: unless-stopped
     env_file: .env.docker
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # Resolve website lookups against public DNS rather than the office
@@ -85,15 +82,52 @@ services:
     # This does not affect service discovery: compose puts these containers on
     # a user-defined network where Docker's embedded resolver (127.0.0.11)
     # still answers for "postgres"; only external names are forwarded here.
+    # Our own recursive resolver. Public resolvers throttle the ~90 lookups/sec
+    # of mostly-NXDOMAIN traffic this pipeline generates; recursing ourselves
+    # means talking to the roots and TLD servers, which do not ration us.
+    # 1.1.1.1 stays as a fallback so unbound dying degrades rather than breaks.
     dns:
+      - 172.28.0.53
       - 1.1.1.1
-      - 8.8.8.8
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      unbound:
+        # service_started, not service_healthy: the healthcheck below depends on
+        # a lookup tool being present in the image, and a scheduler that cannot
+        # start is worse than one that briefly falls back to 1.1.1.1.
+        condition: service_started
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     # shm is tiny by default and Chromium crashes on it under concurrency.
     shm_size: 1gb
     command: python scheduler.py
+
+  unbound:
+    image: mvance/unbound:latest
+    restart: unless-stopped
+    # Fixed address because Docker's `dns:` takes addresses, not service names.
+    networks:
+      default:
+        ipv4_address: 172.28.0.53
+    volumes:
+      - ./deploy/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
+    healthcheck:
+      # Informational only -- nothing blocks on it. Uses whichever tool the
+      # image ships; if neither exists the container still serves DNS fine.
+      test: ["CMD-SHELL", "drill @127.0.0.1 cloudflare.com >/dev/null 2>&1 || dig @127.0.0.1 cloudflare.com +short >/dev/null 2>&1 || nslookup cloudflare.com 127.0.0.1 >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+networks:
+  # An explicit subnet so unbound can hold a fixed address.
+  default:
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   pgdata:

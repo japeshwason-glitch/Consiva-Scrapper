@@ -399,7 +399,8 @@ ACCEPT_SCORE = 80
 CORROBORATION_BONUS = 10 # registered PIN/district found on the page
 
 
-def resolve(company, fetch_fn, loc=None, max_candidates=6, log=None):
+def resolve(company, fetch_fn, loc=None, max_candidates=6, log=None,
+            only_hosts=None):
     """
     (winner | None, reason, examined).
 
@@ -408,13 +409,25 @@ def resolve(company, fetch_fn, loc=None, max_candidates=6, log=None):
     failure of the resolver.
 
     fetch_fn(host) -> (final_url, title, body) or None.
+
+    only_hosts restricts the probe to those hostnames instead of generating
+    60-70 from the name. The browser escalation pass uses it: the HTTP pass
+    already established which host sat behind a bot wall, so re-probing every
+    candidate through Playwright repeats work that is 10x more expensive per
+    page and was already answered.
     """
     name = company["company_name"]
     loc = loc if loc is not None else {"pin": None, "state": None, "locations": []}
     examined, fetched = [], 0
     transient_dns = 0
 
-    for host, tld, tier, priority in candidate_hosts(name):
+    if only_hosts:
+        candidates = [(h, _tld_of(h), TIER_STRONG, i)
+                      for i, h in enumerate(only_hosts)]
+    else:
+        candidates = candidate_hosts(name)
+
+    for host, tld, tier, priority in candidates:
         if fetched >= max_candidates:
             break
         try:
@@ -553,6 +566,14 @@ DNS_OUTAGE_STREAK = 200
 DNS_RETRIES = 3          # attempts before a lookup counts as unanswered
 DNS_BACKOFF = 0.4        # seconds, doubled each attempt
 _EAI_AGAIN_STREAK = 0
+
+
+def _tld_of(host):
+    # Longest first, or ".in" claims every ".co.in" before it is tested.
+    for tld in sorted(TLD_PRIORITY, key=len, reverse=True):
+        if host.endswith(tld):
+            return tld
+    return "." + host.rsplit(".", 1)[-1] if "." in host else ""
 
 
 def _dns_ok(host):

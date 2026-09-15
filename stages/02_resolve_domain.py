@@ -171,7 +171,13 @@ def main():
             # Hold blocked companies back for the browser pass rather than
             # writing them off on evidence we never actually saw.
             if reason.startswith("BLOCKED:") and not escalated:
-                blocked_companies.append(company)
+                # "BLOCKED: a.com, b.in -- could not read the page". Carry the
+                # hostnames so the browser pass probes only those instead of
+                # regenerating and re-fetching all 30 candidates.
+                hosts = [h.strip() for h in
+                         reason[len("BLOCKED:"):].split("--")[0].split(",")
+                         if h.strip()]
+                blocked_companies.append((company, hosts))
                 print(f"  wall  {name:<44} {reason[:64]}", flush=True)
                 return
             if reason.startswith("DNS_UNAVAILABLE:"):
@@ -253,10 +259,11 @@ def main():
               flush=True)
         browser_fetch = playwright_fetch_factory()
         try:
-            for company in blocked_companies:
+            for company, hosts in blocked_companies:
                 loc = location.parse(company.get("registered_address"))
                 try:
-                    winner, reason, _ = resolver.resolve(company, browser_fetch, loc=loc)
+                    winner, reason, _ = resolver.resolve(
+                        company, browser_fetch, loc=loc, only_hosts=hosts)
                 except (resolver.DNSUnavailable,
                         resolver.VerifierUnavailable) as exc:
                     # Same rule as the main pass: a broken resolver or a dead

@@ -90,7 +90,14 @@ def queue_signature():
     across a cycle mean nothing moved anywhere, which is the only reliable
     signal that another cycle is pointless.
     """
-    return tuple(pending(st) for st in
+    # One GROUP BY, not seven counts. Each count is a scan of 1.4M rows
+    # (45ms), while the grouped form answers for every status at once (37ms) --
+    # and this runs twice per cycle, so the naive version cost ~0.6s a cycle
+    # to learn nothing extra.
+    with db.get_cursor() as cur:
+        cur.execute("SELECT status, COUNT(*) AS n FROM companies GROUP BY status")
+        counts = {r["status"]: r["n"] for r in cur.fetchall()}
+    return tuple(counts.get(st, 0) for st in
                  ("discovered", "resolved", "scraped", "classified",
                   "contact_done", "contact_failed", "exported"))
 

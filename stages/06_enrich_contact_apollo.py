@@ -205,13 +205,14 @@ def main():
     companies = db.get_pending("classified", limit=args.limit)
     if not companies:
         print("nothing at status='classified'")
-        return
+        return False
 
     reveal = config.APOLLO_ALLOW_EMAIL_REVEAL
     print(f"finding contacts for {len(companies)} companies "
           f"(email reveal {'ON -- SPENDING CREDITS' if reveal else 'OFF, free search only'})\n")
 
     found = missing = failed = 0
+    budget_spent = False
     for company in companies:
         domain = company.get("final_domain") or company.get("resolved_domain")
         name = company["company_name"][:36]
@@ -224,7 +225,10 @@ def main():
             # their retries on our quota rather than on anything about them.
             print(f"\nSTOPPING: {str(exc)[:150]}", flush=True)
             print(f"  {len(companies) - (found + missing + failed)} compan(ies) "
-                  f"left at 'classified' for the next run", flush=True)
+                  f"left at 'classified' -- stage 07 exports them anyway, so "
+                  f"they still reach the CRM today, just without a name",
+                  flush=True)
+            budget_spent = True
             break
         except apollo_client.ApolloUnavailable as exc:
             failed += 1
@@ -277,7 +281,10 @@ def main():
         print("dry run -- nothing written")
     else:
         print("status counts:", db.count_by_status())
+    return budget_spent
 
 
 if __name__ == "__main__":
-    main()
+    # 75 = EX_TEMPFAIL: nothing wrong with the data, the allowance is
+    # spent. run_daily reads this and stops calling us until tomorrow.
+    sys.exit(75 if main() else 0)

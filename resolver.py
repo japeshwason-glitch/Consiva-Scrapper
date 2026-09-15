@@ -458,10 +458,22 @@ def resolve(company, fetch_fn, loc=None, max_candidates=6, log=None):
             global _FUZZY_FALLBACKS
             _FUZZY_FALLBACKS += 1
             logging.warning("verifier unavailable, falling back to fuzzy match "
-                            "for %s (%d so far this run): %s",
+                            "for %s (%d in a row): %s",
                             company.get("company_name"), _FUZZY_FALLBACKS, reason)
+            if _FUZZY_FALLBACKS >= VERIFIER_OUTAGE_STREAK:
+                # The model is down, not flaky. Fuzzy matching accepts domains
+                # on name similarity alone -- marvel.com is a perfect name
+                # match for MARVEL KING LIMITED -- so continuing would quietly
+                # fill the CRM with other companies' websites. An unattended
+                # run must stop here, not degrade.
+                raise VerifierUnavailable(
+                    f"{_FUZZY_FALLBACKS} consecutive identity checks fell back "
+                    f"to fuzzy matching: {reason}")
             score = name_axis(name, title, body)
             reason = f"[fuzzy fallback] {reason}"
+
+        else:
+            _FUZZY_FALLBACKS = 0
 
         loc_score, loc_hit = location_axis(loc, f"{title} {body}", name)
         if loc_score >= LOCATION_STRONG:
@@ -510,6 +522,18 @@ def match_score_for(company, title, body):
         company["company_name"], title, body,
         industry=company.get("industrial_classification"),
     )
+
+
+class VerifierUnavailable(RuntimeError):
+    """
+    The identity model is unreachable. Raised rather than degrading, because
+    the fallback accepts domains on name similarity alone.
+    """
+
+
+# Consecutive fallbacks that mean the model is down rather than one call
+# glitching. Low, because every company past this point risks a wrong domain.
+VERIFIER_OUTAGE_STREAK = 15
 
 
 class DNSUnavailable(RuntimeError):

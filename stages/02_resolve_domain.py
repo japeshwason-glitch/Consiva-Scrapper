@@ -231,7 +231,7 @@ def main():
             company = futures[future]
             try:
                 winner, reason, _ = future.result()
-            except resolver.DNSUnavailable as exc:
+            except (resolver.DNSUnavailable, resolver.VerifierUnavailable) as exc:
                 print(f"\nABORTING: {exc}", flush=True)
                 print("No company was marked failed. Fix DNS and re-run; "
                       "every row is still at 'discovered'.", flush=True)
@@ -257,10 +257,11 @@ def main():
                 loc = location.parse(company.get("registered_address"))
                 try:
                     winner, reason, _ = resolver.resolve(company, browser_fetch, loc=loc)
-                except resolver.DNSUnavailable as exc:
-                    # Same rule as the main pass: a broken resolver is not a
-                    # verdict. Stop here rather than charging retries to the
-                    # companies we have not reached yet.
+                except (resolver.DNSUnavailable,
+                        resolver.VerifierUnavailable) as exc:
+                    # Same rule as the main pass: a broken resolver or a dead
+                    # verifier is not a verdict. Stop here rather than charging
+                    # retries to companies we have not reached yet.
                     print(f"\nABORTING escalation: {exc}", flush=True)
                     break
                 except Exception as exc:

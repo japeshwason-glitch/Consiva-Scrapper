@@ -84,6 +84,17 @@ def pending(status, where=None):
         return cur.fetchone()["n"]
 
 
+def queue_signature():
+    """
+    Counts at every status that work moves through. Two identical signatures
+    across a cycle mean nothing moved anywhere, which is the only reliable
+    signal that another cycle is pointless.
+    """
+    return tuple(pending(st) for st in
+                 ("discovered", "resolved", "scraped", "classified",
+                  "contact_done", "contact_failed", "exported"))
+
+
 def log_run(stage, started, code, records_in, note=""):
     with db.get_cursor() as cur:
         cur.execute("""INSERT INTO pipeline_runs
@@ -114,8 +125,15 @@ def run(stage, args, dry_run=False):
     return proc.returncode
 
 
-def cycle(dry_run, workers=WORKERS):
-    """One pass through the pipeline. Each stage feeds the next."""
+def cycle(dry_run, workers=WORKERS, skip_contacts=False):
+    """
+    One pass through the pipeline. Each stage feeds the next.
+
+    Returns True if contact enrichment reported its daily allowance spent, so
+    the caller can skip it for the rest of the day instead of paying its
+    rate-limit waits on every cycle for nothing.
+    """
+    budget_spent = False
     # Screen new companies, best-yielding states first.
     if pending("discovered") > 0:
         for state in STATE_ORDER:
@@ -131,8 +149,14 @@ def cycle(dry_run, workers=WORKERS):
             ["--limit", "500", "--concurrency", str(SCRAPE_CONCURRENCY)], dry_run)
     if pending("scraped", "has_cmp = false AND consent_gap_score > 0") or dry_run:
         run("05_classify_scale.py", ["--limit", "500"], dry_run)
-    if pending("classified") or dry_run:
-        run("06_enrich_contact_apollo.py", ["--limit", "500"], dry_run)
+    # Contact enrichment is additive -- stage 07 exports a lead whether or not
+    # this ran -- so a spent allowance is a reason to skip it, never to stall.
+    if not skip_contacts and (pending("classified") or dry_run):
+        rc = run("06_enrich_contact_apollo.py", ["--limit", "500"], dry_run)
+        if rc == 75:
+            budget_spent = True
+            print("   contact allowance spent for the day; "
+                  "leads still export without a name", flush=True)
     # Stage 07 exports contact_done AND contact_failed -- a company with a
     # consent gap is a lead whether or not Apollo had a person for it, and
     # Apollo returns nothing for most small Indian firms. Gating on
@@ -143,6 +167,7 @@ def cycle(dry_run, workers=WORKERS):
         run("07_export_crm.py", [], dry_run)
     if pending("exported", "delivered_at IS NULL") or dry_run:
         run("crm_push.py", ["--limit", "500"], dry_run)
+    return budget_spent
 
 
 def main():
@@ -171,6 +196,8 @@ def main():
     print(f"{done} leads and {scraped_today()} scrapes already done today "
           f"({'resuming' if done or scraped_today() else 'starting fresh'})\n")
 
+    skip_contacts = False
+    stalled = 0
     for i in range(1, args.max_cycles + 1):
         done = leads_today()
         if done >= args.target:
@@ -183,10 +210,30 @@ def main():
             return
         print(f"cycle {i}  ({done}/{args.target} leads, "
               f"{scraped} scraped today)", flush=True)
-        cycle(args.dry_run, args.workers)
+
+        before = (done, scraped, queue_signature())
+        budget_spent = cycle(args.dry_run, args.workers, skip_contacts)
+        skip_contacts = skip_contacts or budget_spent
         if args.dry_run:
             print("\ndry run — nothing executed")
             return
+
+        # A cycle that delivers nothing AND leaves every queue unchanged has
+        # nothing left to try: every stage is either empty or failing the same
+        # way. Spinning through the remaining cycles would just repeat it, so
+        # stop and say so rather than burn the night looking busy.
+        after = (leads_today(), scraped_today(), queue_signature())
+        if after == before:
+            stalled += 1
+            if stalled >= 2:
+                print(f"\nSTALLED at {after[0]}/{args.target} leads -- two "
+                      f"cycles changed nothing. Queue: {queue_signature()}")
+                print("Nothing is retryable right now; check the stage output "
+                      "above. The next scheduled run will pick up where this "
+                      "stopped -- no state is lost.")
+                return
+        else:
+            stalled = 0
 
     print(f"\nstopped after {args.max_cycles} cycles at {leads_today()}/{args.target}")
 

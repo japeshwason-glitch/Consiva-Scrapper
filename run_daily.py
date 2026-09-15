@@ -56,6 +56,10 @@ SCRAPE_CONCURRENCY = 6
 # Screening batch per cycle. Sized so a cycle is ~20 minutes: long enough to
 # amortise browser startup, short enough that a crash loses little.
 SCREEN_BATCH = 400
+# How long to wait when DNS or the identity model is unreachable. Both restart
+# on their own; this is long enough to cover a model reload, short enough that
+# a night can absorb several.
+INFRA_BACKOFF = 300
 STATE_ORDER = ("maharashtra", "delhi", "chandigarh", "karnataka",
                "gujarat", "uttar pradesh")   # best resolution rate first
 
@@ -141,15 +145,24 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
     rate-limit waits on every cycle for nothing.
     """
     budget_spent = False
+    infra_down = False
     # Screen new companies, best-yielding states first.
     if pending("discovered") > 0:
         for state in STATE_ORDER:
             if pending("discovered", f"state_code='{state}'") == 0:
                 continue
-            run("02_resolve_domain.py",
-                ["--limit", str(SCREEN_BATCH // len(STATE_ORDER)),
-                 "--no-escalate", "--workers", str(workers),
-                 "--where", f"state_code='{state}'"], dry_run)
+            rc = run("02_resolve_domain.py",
+                     ["--limit", str(SCREEN_BATCH // len(STATE_ORDER)),
+                      "--no-escalate", "--workers", str(workers),
+                      "--where", f"state_code='{state}'"], dry_run)
+            if rc == 75:
+                # DNS or the identity model is down. Both self-heal -- the
+                # model unit restarts in ~10s plus load time -- so the work is
+                # waiting, not lost. Screening more states right now would just
+                # abort again and burn the cycle budget, so stop screening and
+                # let the rest of the pipeline drain what is already queued.
+                infra_down = True
+                break
 
     if pending("resolved") or dry_run:
         run("03_scrape_playwright.py",
@@ -174,7 +187,7 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
         run("07_export_crm.py", [], dry_run)
     if pending("exported", "delivered_at IS NULL") or dry_run:
         run("crm_push.py", ["--limit", "500"], dry_run)
-    return budget_spent
+    return budget_spent, infra_down
 
 
 def main():
@@ -219,8 +232,15 @@ def main():
               f"{scraped} scraped today)", flush=True)
 
         before = (done, scraped, queue_signature())
-        budget_spent = cycle(args.dry_run, args.workers, skip_contacts)
+        budget_spent, infra_down = cycle(args.dry_run, args.workers, skip_contacts)
         skip_contacts = skip_contacts or budget_spent
+        if infra_down:
+            # Wait for the thing to come back rather than spending cycles
+            # discovering it is still down. Nine cycles are needed out of
+            # forty, so there is room to lose a few to a restart.
+            print(f"   infrastructure down; waiting {INFRA_BACKOFF//60} min "
+                  f"before the next cycle", flush=True)
+            time.sleep(INFRA_BACKOFF)
         if args.dry_run:
             print("\ndry run — nothing executed")
             return

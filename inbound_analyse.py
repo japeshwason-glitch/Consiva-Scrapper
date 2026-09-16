@@ -94,15 +94,15 @@ def reason_skipped(email):
     return f"could not derive a domain from {email}"
 
 
-def fetch_leads(conn, since, until):
+def fetch_leads(conn, since, until, force=False):
     """Leads created in the window that have not been analysed yet."""
     cur = conn.cursor()
-    cur.execute("""
+    cur.execute(f"""
         SELECT Id, Email, Company, FirstName, LastName, JobTitle, CreatedAt
         FROM crm.CrmLeads
         WHERE IsDeleted = 0
           AND CreatedAt >= %s AND CreatedAt < %s
-          AND ConsentFinding IS NULL
+          {"" if force else "AND ConsentFinding IS NULL"}
         ORDER BY CreatedAt""", (since, until))
     cols = ("Id", "Email", "Company", "FirstName", "LastName", "JobTitle", "CreatedAt")
     return [dict(zip(cols, r)) for r in cur.fetchall()]
@@ -117,13 +117,14 @@ def write_result(conn, lead_ids, data=None, note=None):
     and applied to each, rather than crawling the same site five times.
     """
     if data:
-        sets = ", ".join(f"{col} = %s" for col, _ in COLUMN_MAP)
-        values = [data.get(key) for _, key in COLUMN_MAP]
+        cols = [c for c, _ in COLUMN_MAP] + ["CookieBanner", "CollectsViaForm"]
+        values = [data.get(k) for _, k in COLUMN_MAP] + [
+            "present" if data.get("has_cookie_banner") else "none",
+            crm_push.form_sentence(data) or None,
+        ]
+        sets = ", ".join(f"{c} = %s" for c in cols)
     else:
         sets, values = "ConsentFinding = %s", [note]
-    sets += ", CookieBanner = %s" if data else ""
-    if data:
-        values.append("present" if data.get("has_cookie_banner") else "none")
     sets += ", UpdatedAt = SYSUTCDATETIME()"
 
     cur = conn.cursor()
@@ -172,6 +173,10 @@ def main():
     ap.add_argument("--concurrency", type=int, default=6)
     ap.add_argument("--no-llm", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force", action="store_true",
+                    help="re-analyse leads already carrying a finding. Needed "
+                         "after a mapping change, since the normal pass skips "
+                         "anything with ConsentFinding set.")
     args = ap.parse_args()
 
     end = (datetime.strptime(args.date, "%Y-%m-%d").date() if args.date
@@ -179,7 +184,7 @@ def main():
     start = end - timedelta(days=args.days)
 
     conn = crm_push.connect()
-    leads = fetch_leads(conn, start, end)
+    leads = fetch_leads(conn, start, end, force=args.force)
     if not leads:
         print(f"no unanalysed leads created between {start} and {end}")
         return

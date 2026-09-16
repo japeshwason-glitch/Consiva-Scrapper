@@ -35,15 +35,26 @@ def clip(value, n):
     return str(value)[:n]
 
 
+def form_sentence(c):
+    """
+    The CollectsViaForm phrase, or "" when the site takes no personal data.
+
+    Shared with the inbound job so both produce the same wording for the same
+    finding -- they write to different tables and would otherwise drift.
+    """
+    if not c.get("has_data_form"):
+        return ""
+    fields = ", ".join(c.get("form_field_types") or [])
+    form = f"{fields} — no consent checkbox" if not c.get("form_consent_checkbox") \
+           else f"{fields} — consent checkbox present"
+    hosts = c.get("form_third_party_hosts") or []
+    if hosts:
+        form += f"; submitted to {', '.join(hosts)}"
+    return form
+
+
 def to_row(c):
-    form = ""
-    if c.get("has_data_form"):
-        fields = ", ".join(c.get("form_field_types") or [])
-        form = f"{fields} — no consent checkbox" if not c.get("form_consent_checkbox") \
-               else f"{fields} — consent checkbox present"
-        hosts = c.get("form_third_party_hosts") or []
-        if hosts:
-            form += f"; submitted to {', '.join(hosts)}"
+    form = form_sentence(c)
 
     return (
         clip(c.get("company_name"), 250),

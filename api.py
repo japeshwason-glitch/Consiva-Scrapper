@@ -154,8 +154,8 @@ def stats():
         total = cur.fetchone()["n"]
         cur.execute(f"""
             SELECT COUNT(*) FILTER (WHERE consent_gap_score IS NOT NULL) AS analysed,
-                   COUNT(*) FILTER (WHERE consent_gap_score > 0)        AS with_gap,
-                   COUNT(*) FILTER (WHERE consent_gap_score >= 50)      AS severe,
+                   COUNT(*) FILTER (WHERE consent_gap_score < 100)      AS with_gap,
+                   COUNT(*) FILTER (WHERE consent_gap_score <= 50)      AS severe,
                    COUNT(*) FILTER (WHERE has_cmp)                      AS has_cmp,
                    COUNT(*) FILTER (WHERE has_data_form)                AS with_form,
                    COUNT(*) FILTER (WHERE has_data_form
@@ -168,9 +168,13 @@ def stats():
 
 
 @app.get("/api/companies", tags=["dashboard"])
-def companies(q: str = "", min_score: int = 0, limit: int = Query(500, le=2000)):
-    where = [LIVE, "consent_gap_score IS NOT NULL", "consent_gap_score >= %s"]
-    params = [min_score]
+def companies(q: str = "", max_score: int = 100, limit: int = Query(500, le=2000)):
+    # max_score, not min_score: 100 is clean and 0 is worst, so "show me the
+    # ones worth calling" is an upper bound. Renamed rather than inverted in
+    # place, so a caller still sending min_score gets an obvious error instead
+    # of silently receiving the compliant companies.
+    where = [LIVE, "consent_gap_score IS NOT NULL", "consent_gap_score <= %s"]
+    params = [max_score]
     if q:
         where.append("(company_name ILIKE %s OR resolved_domain ILIKE %s)")
         params += [f"%{q}%", f"%{q}%"]
@@ -182,7 +186,7 @@ def companies(q: str = "", min_score: int = 0, limit: int = Query(500, le=2000))
                                has_data_form, contact_name, contact_title,
                                industrial_classification, linkedin_employee_count
                         FROM companies WHERE {' AND '.join(where)}
-                        ORDER BY consent_gap_score DESC, company_name ASC
+                        ORDER BY consent_gap_score ASC, company_name ASC
                         LIMIT %s""", params)
         return [dict(r) for r in cur.fetchall()]
 

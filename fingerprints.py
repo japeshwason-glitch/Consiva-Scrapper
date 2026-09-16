@@ -576,9 +576,14 @@ def form_gap(forms):
     }
 
 
-def gap_score_with_forms(has_cmp, analysis, banner, policy, forms=None):
+def consent_score(has_cmp, analysis, banner, policy, forms=None):
     """
-    consent_gap_score including data-collection forms.
+    0-100 where 100 is CLEAN and 0 is worst. Higher is better.
+
+    The scale reads the way a score is normally read: a site with nothing
+    wrong scores 100, a site tracking heavily before consent scores near 0.
+    Internally the parts are still accumulated as gap POINTS -- more points
+    means more wrong -- and inverted once, here, at the end.
 
     Supersedes gap_score(): that returned 0 whenever a site set no tracking
     cookies, which wrote off 58% of scraped sites -- including any that quietly
@@ -594,11 +599,11 @@ def gap_score_with_forms(has_cmp, analysis, banner, policy, forms=None):
     """
     base = gap_score(has_cmp, analysis, banner, policy)
     if has_cmp:
-        return 0        # they already run a CMP; not a lead regardless
+        return 100      # they already run a CMP; compliant, not a lead
 
     form = forms or {}
     if not form.get("has_data_form"):
-        return base
+        return 100 - base
 
     extra = 0
     if not form.get("consent_checkbox"):
@@ -608,4 +613,4 @@ def gap_score_with_forms(has_cmp, analysis, banner, policy, forms=None):
     if form.get("external_hosts"):
         extra += 10
 
-    return int(min(100, base + extra))
+    return 100 - int(min(100, base + extra))

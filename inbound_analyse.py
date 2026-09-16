@@ -54,8 +54,8 @@ SKIP_DOMAINS = {d.strip().lower() for d in
 
 # CrmLeads column <- analysis key. Deliberately the same 12 facts the MCA
 # scraper sends, so both jobs produce one comparable record.
-# GapScore is flipped on the way out by crm_push.outward_gap_score -- their
-# scale has 100 as clean, ours has 100 as worst.
+# consent_gap_score is already on the outward scale (100 = clean), so it maps
+# straight across with no conversion.
 COLUMN_MAP = (
     ("ScrapperWebsite",     "final_domain"),
     ("GapScore",            "consent_gap_score"),
@@ -120,9 +120,7 @@ def write_result(conn, lead_ids, data=None, note=None):
     """
     if data:
         cols = [c for c, _ in COLUMN_MAP] + ["CookieBanner", "CollectsViaForm"]
-        values = [(crm_push.outward_gap_score(data.get(k))
-                   if col == "GapScore" else data.get(k))
-                  for col, k in COLUMN_MAP] + [
+        values = [data.get(k) for _, k in COLUMN_MAP] + [
             "present" if data.get("has_cookie_banner") else "none",
             crm_push.form_sentence(data) or None,
         ]

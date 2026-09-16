@@ -35,28 +35,6 @@ def clip(value, n):
     return str(value)[:n]
 
 
-# Their scale runs the other way from ours. Internally a HIGH score means a
-# BIG gap, which is how every pipeline filter reads it. On their side 100 means
-# clean and 0 means worst, so the value is flipped once, here, at the boundary.
-#
-# Consequences on their side, which do not apply to ours:
-#   a lead  is GapScore < 100   (was > 0)
-#   severe  is GapScore <= 50   (was >= 50)
-OUTWARD_SCORE_MAX = 100
-
-
-def outward_gap_score(internal):
-    """
-    Our 0-100 (high = worse) as their 0-100 (high = better).
-
-    Returns None for None so an unmeasured row stays unmeasured rather than
-    becoming a perfect 100.
-    """
-    if internal is None:
-        return None
-    return OUTWARD_SCORE_MAX - int(internal)
-
-
 def form_sentence(c):
     """
     The CollectsViaForm phrase, or "" when the site takes no personal data.
@@ -81,7 +59,7 @@ def to_row(c):
     return (
         clip(c.get("company_name"), 250),
         clip(c.get("final_domain") or c.get("resolved_domain"), 500),
-        outward_gap_score(c.get("consent_gap_score")),
+        c.get("consent_gap_score"),
         clip(c.get("contact_name"), 200),
         clip(c.get("contact_title"), 200),
         clip(c.get("business_scale"), 100),
@@ -133,7 +111,7 @@ def main():
     leads = [c for c in db.get_pending(
                  "exported", limit=limit * 5,
                  extra_where="delivered_at IS NULL AND has_cmp = false "
-                             "AND consent_gap_score > 0" + verified)][:limit]
+                             "AND consent_gap_score < 100" + verified)][:limit]
     if not leads:
         sys.exit("nothing at status='exported' waiting to be delivered")
 

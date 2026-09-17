@@ -47,20 +47,63 @@ class ApolloBudgetExhausted(RuntimeError):
 # read them back and pace against whatever the account actually has.
 _LIMIT_HEADERS = ("x-minute-requests-left", "x-hourly-requests-left",
                   "x-24-hour-requests-left")
-_left = {}
+
+# Allowances are per API key, so each key in the pool is tracked separately and
+# the pool is only exhausted once every key is. With one key configured this is
+# exactly the old single-key behaviour.
+_left = {}          # key -> {header: remaining}
+_key_index = 0
+_spent = set()      # keys whose 24-hour allowance is gone
+
+
+def _keys():
+    return config.APOLLO_API_KEYS or ([config.APOLLO_API_KEY]
+                                      if config.APOLLO_API_KEY else [])
+
+
+def current_key():
+    keys = _keys()
+    return keys[_key_index % len(keys)] if keys else None
+
+
+def _rotate():
+    """
+    Move to the next key with allowance left. True if one was found.
+
+    Rotation is what makes a spent key a pause rather than the end of the day:
+    the run continues on the next key and only stops when all are spent.
+    """
+    global _key_index
+    keys = _keys()
+    for step in range(1, len(keys) + 1):
+        candidate = keys[(_key_index + step) % len(keys)]
+        if candidate not in _spent:
+            _key_index = (_key_index + step) % len(keys)
+            logging.warning("apollo: key %d/%d spent, switching to key %d",
+                            (_key_index - step) % len(keys) + 1, len(keys),
+                            _key_index + 1)
+            return True
+    return False
 
 
 def requests_left():
-    """Last-seen remaining allowance per window, or {} before the first call."""
-    return dict(_left)
+    """Last-seen remaining allowance for the key in use, or {} before use."""
+    return dict(_left.get(current_key(), {}))
+
+
+def pool_status():
+    """(keys configured, keys with allowance left) -- for logging a run."""
+    keys = _keys()
+    return len(keys), len([k for k in keys if k not in _spent])
 
 
 def _note_limits(headers):
+    slot = _left.setdefault(current_key(), {})
     for h in _LIMIT_HEADERS:
         v = headers.get(h)
         if v is not None:
             try:
-                _left[h] = int(v)
+                slot[h] = int(v)
             except ValueError:
                 pass
 
@@ -73,14 +116,18 @@ def _pace():
     """
     # Before the first call nothing is known, and an unknown window must not
     # be treated as an exhausted one -- that slept 60s before call number one.
-    day = _left.get("x-24-hour-requests-left")
-    minute = _left.get("x-minute-requests-left")
-    hour = _left.get("x-hourly-requests-left")
+    seen = _left.get(current_key(), {})
+    day = seen.get("x-24-hour-requests-left")
+    minute = seen.get("x-minute-requests-left")
+    hour = seen.get("x-hourly-requests-left")
 
     if day is not None and day <= 0:
+        _spent.add(current_key())
+        if _rotate():
+            return          # the next key has its own allowance; carry on
         raise ApolloBudgetExhausted(
-            "24-hour Apollo allowance is spent; remaining companies left "
-            "untouched for the next run")
+            f"every configured Apollo key ({len(_keys())}) has spent its "
+            f"24-hour allowance; remaining companies left for the next run")
     if minute is not None and minute <= 1:
         logging.info("apollo: minute allowance spent, waiting 60s")
         time.sleep(60)
@@ -92,12 +139,13 @@ def _pace():
 
 
 def _post(url, payload):
-    if not config.APOLLO_API_KEY:
-        raise ApolloUnavailable("APOLLO_API_KEY is not set")
+    if not current_key():
+        raise ApolloUnavailable("no Apollo API key configured "
+                                "(APOLLO_API_KEY or APOLLO_API_KEYS)")
     req = urllib.request.Request(
         url, json.dumps(payload).encode(),
         {"Content-Type": "application/json", "Cache-Control": "no-cache",
-         "x-api-key": config.APOLLO_API_KEY})
+         "x-api-key": current_key()})
     _pace()
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
@@ -109,8 +157,10 @@ def _post(url, payload):
         if exc.code == 429:
             # Paced wrong, or another process shares the key. Wait out the
             # minute window once and retry rather than burning the company.
-            if _left.get("x-24-hour-requests-left", 1) <= 0:
-                raise ApolloBudgetExhausted(body) from exc
+            if _left.get(current_key(), {}).get("x-24-hour-requests-left", 1) <= 0:
+                _spent.add(current_key())
+                if not _rotate():
+                    raise ApolloBudgetExhausted(body) from exc
             logging.warning("apollo: 429, waiting 60s and retrying once")
             time.sleep(60)
             try:

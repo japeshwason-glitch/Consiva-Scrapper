@@ -208,6 +208,10 @@ def main():
         return False
 
     reveal = config.APOLLO_ALLOW_EMAIL_REVEAL
+    n_keys, n_live = apollo_client.pool_status()
+    if n_keys > 1:
+        print(f"apollo key pool: {n_live} of {n_keys} with allowance left "
+              f"(ceiling {n_keys * 600}/day)")
     print(f"finding contacts for {len(companies)} companies "
           f"(email reveal {'ON -- SPENDING CREDITS' if reveal else 'OFF, free search only'})\n")
 

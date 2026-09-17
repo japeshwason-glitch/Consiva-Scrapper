@@ -31,6 +31,12 @@ _load_dotenv()
 
 DATABASE_URL = os.environ.get("DATABASE_URL")  # postgres connection string
 APOLLO_API_KEY = os.environ.get("APOLLO_API_KEY")
+# Optional pool, comma-separated. Each key carries its own 50/min, 200/hour and
+# 600/day allowance, so N keys raise the daily contact ceiling to N x 600.
+# Falls back to the single key when unset.
+APOLLO_API_KEYS = [k.strip() for k in
+                   (os.environ.get("APOLLO_API_KEYS") or APOLLO_API_KEY or "").split(",")
+                   if k.strip()]
 LUSHA_API_KEY = os.environ.get("LUSHA_API_KEY")
 APIFY_API_TOKEN = os.environ.get("APIFY_API_TOKEN")
 

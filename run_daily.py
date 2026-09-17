@@ -56,6 +56,24 @@ SCRAPE_CONCURRENCY = 6
 # Screening batch per cycle. Sized so a cycle is ~20 minutes: long enough to
 # amortise browser startup, short enough that a crash loses little.
 SCREEN_BATCH = 400
+
+# Sectors we do not screen. Not an exposure judgement -- measured across 435
+# delivered leads, manufacturing and construction are slightly MORE in breach
+# than BFSI (71% have a form with no consent box, against 66%). It is a buying
+# judgement: B2B, low consumer data volume, no customer pressure demanding a
+# DPA, historically low IT spend. They are in scope and will not buy.
+#
+# Excluded at screening rather than at export, so we never spend a resolve, a
+# page load or a model call on them. 373,308 of 1,444,890 -- 25.8% of the
+# corpus never gets touched.
+EXCLUDE_INDUSTRY = (
+    "industrial_classification NOT LIKE 'Manufacturing%' AND "
+    "industrial_classification NOT LIKE 'Construction%'"
+)
+# The same clause reaches psycopg2, where a bare % is read as a placeholder
+# and blows up a parameterised query, and the stage's --where argument, where
+# it must stay a literal.
+EXCLUDE_INDUSTRY_SQL = EXCLUDE_INDUSTRY.replace("%", "%%")
 # How long to wait when DNS or the identity model is unreachable. Both restart
 # on their own; this is long enough to cover a model reload, short enough that
 # a night can absorb several.
@@ -149,12 +167,14 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
     # Screen new companies, best-yielding states first.
     if pending("discovered") > 0:
         for state in STATE_ORDER:
-            if pending("discovered", f"state_code='{state}'") == 0:
+            if pending("discovered",
+                       f"state_code='{state}' AND {EXCLUDE_INDUSTRY_SQL}") == 0:
                 continue
             rc = run("02_resolve_domain.py",
                      ["--limit", str(SCREEN_BATCH // len(STATE_ORDER)),
                       "--no-escalate", "--workers", str(workers),
-                      "--where", f"state_code='{state}'"], dry_run)
+                      "--where", f"state_code='{state}' AND {EXCLUDE_INDUSTRY}"],
+                     dry_run)
             if rc == 75:
                 # DNS or the identity model is down. Both self-heal -- the
                 # model unit restarts in ~10s plus load time -- so the work is

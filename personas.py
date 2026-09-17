@@ -44,8 +44,8 @@ BY_SCALE = {
     },
     "MSME": {
         "Managing Director": 92, "Director": 88, "Proprietor": 82,
-        "Partner": 78, "Owner": 74, "Marketing Manager": 62,
-        "IT Manager": 58, "Founder": 56,
+        "Partner": 78, "Owner": 74, "Marketing Manager": 38,
+        "IT Manager": 36, "Founder": 56,
     },
     # Mostly LLPs, where paid-up capital is not filed and scale is unknowable
     # from the registry. Their statutory roles are partners, not directors.
@@ -73,6 +73,13 @@ BY_INDUSTRY = {
         "Head of Operations": 10},
     "Community, personal and Social Services": {
         "Head of Operations": 12, "Head of Marketing": 8},
+    "Manufacturing": {"Managing Director": 12, "Director": 10,
+                      "Head of Operations": 8, "IT Head": 6,
+                      "Chief Technology Officer": -8},
+    "Real Estate": {"Managing Director": 12, "Director": 10,
+                    "Head of Marketing": 8, "Chief Technology Officer": -10},
+    "Construction": {"Managing Director": 12, "Director": 10,
+                     "Head of Operations": 8, "Chief Technology Officer": -10},
     "Trading": {"Proprietor": 12, "Partner": 10, "Managing Director": 8,
                 "Owner": 8, "Chief Technology Officer": -15, "IT Head": -10},
 }
@@ -81,7 +88,6 @@ BY_INDUSTRY = {
 # wastes one of the three slots.
 SYNONYMS = (
     ("Founder", "Co-Founder", "Chief Executive Officer", "Proprietor", "Owner"),
-    ("Managing Director", "Director"),
     ("Partner", "Designated Partner"),
     ("Chief Information Officer", "IT Head", "IT Manager"),
     ("Head of Compliance", "Head of Legal", "Company Secretary"),
@@ -109,6 +115,10 @@ INDUSTRY_ALIASES = (
      "Business Services"),
     (("trading", "wholesale", "retail", "import", "export", "distribut"),
      "Trading"),
+    (("manufactur", "industr", "engineering", "chemical", "textile",
+      "plastic", "metal", "machinery", "pharma", "food stuff"), "Manufacturing"),
+    (("real estate", "renting", "property", "infrastructure"), "Real Estate"),
+    (("construction", "builder", "contracting"), "Construction"),
     (("transport", "logistics", "communication", "shipping", "warehous"),
      "Transport, storage and Communications"),
     (("community", "social service", "personal service", "hospitality",

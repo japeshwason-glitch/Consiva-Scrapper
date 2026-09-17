@@ -293,3 +293,73 @@ def match_score(company_name, title, text, industry=None):
         return None, f"verifier returned a non-numeric score: {score!r}"
     reason = str(parsed.get("reason") or "").strip()[:200]
     return max(0, min(100, int(score))), reason
+
+
+PROFILE_SYSTEM = (
+    "You classify a company from its own website. Reply with JSON only:\n"
+    '{"industry": "<one of the listed values>", "scale": "<one of the listed '
+    'values>", "confidence": "high|medium|low", "reason": "<12 words>"}\n\n'
+    "industry must be exactly one of: Business Services, Finance, Insurance, "
+    "Trading, Manufacturing, Construction, Real Estate, Healthcare, Education, "
+    "Transport, storage and Communications, Community, personal and Social "
+    "Services, Other.\n\n"
+    "scale must be exactly one of: Startup, MSME, SMB, Enterprise, Unknown.\n"
+    "  Startup    — young, product-led, small team, often hiring engineers\n"
+    "  MSME       — small local or family business, few staff, no career page\n"
+    "  SMB        — established mid-size firm, multiple functions or locations\n"
+    "  Enterprise — large, many offices or countries, investor or press pages\n"
+    "  Unknown    — the site genuinely does not say\n\n"
+    "Answer Unknown rather than guessing. A brochure site for a small firm is "
+    "MSME, not Enterprise, however polished it looks."
+)
+
+_INDUSTRIES = {
+    "business services", "finance", "insurance", "trading", "manufacturing",
+    "construction", "real estate", "healthcare", "education",
+    "transport, storage and communications",
+    "community, personal and social services", "other",
+}
+_SCALES = {"startup", "msme", "smb", "enterprise", "unknown"}
+
+
+def profile_company(name, title, text, signals=None):
+    """
+    (industry, scale, confidence, reason) inferred from a company's own site.
+
+    For inbound leads there is no registry row to read capital or entity type
+    from, so the site is the only evidence. Returns (None, "Unknown", ...) when
+    the model is unreachable, so a caller writes nothing rather than a guess.
+    """
+    context = [f"Company: {name}"]
+    for key, label in (("open_roles_count", "open roles advertised"),
+                       ("notable_open_roles", "roles"),
+                       ("tech_ecommerce_platform", "ecommerce platform"),
+                       ("tech_cms", "CMS"),
+                       ("notable_clients", "named clients"),
+                       ("footer_address", "address")):
+        value = (signals or {}).get(key)
+        if value:
+            context.append(f"{label}: {value}")
+
+    try:
+        parsed = chat_json(
+            PROFILE_SYSTEM,
+            "\n".join(context) + f"\n\nWebsite title: {title}\n\n"
+            f"Website text:\n{(text or '')[:2500]}",
+            max_tokens=200,
+        )
+    except LLMUnavailable as exc:
+        return None, "Unknown", "low", f"profiler unavailable: {exc}"
+    if not parsed:
+        return None, "Unknown", "low", "profiler returned no parseable JSON"
+
+    industry = str(parsed.get("industry") or "").strip()
+    scale = str(parsed.get("scale") or "").strip()
+    if industry.lower() not in _INDUSTRIES:
+        industry = None
+    if scale.lower() not in _SCALES:
+        scale = "Unknown"
+    else:
+        scale = {"msme": "MSME", "smb": "SMB"}.get(scale.lower(), scale.title())
+    return (industry, scale, str(parsed.get("confidence") or "low"),
+            str(parsed.get("reason") or "")[:200])

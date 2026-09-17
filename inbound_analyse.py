@@ -31,6 +31,8 @@ from importlib import import_module
 
 import config
 import crm_push
+import llm
+import personas
 
 _stage03 = import_module("03_scrape_playwright")
 
@@ -119,10 +121,16 @@ def write_result(conn, lead_ids, data=None, note=None):
     and applied to each, rather than crawling the same site five times.
     """
     if data:
-        cols = [c for c, _ in COLUMN_MAP] + ["CookieBanner", "CollectsViaForm"]
+        cols = [c for c, _ in COLUMN_MAP] + [
+            "CookieBanner", "CollectsViaForm", "CompanyScale", "Industry",
+            "TargetTitle1", "TargetTitle2", "TargetTitle3"]
+        titles = (data.get("target_titles") or [None, None, None])
         values = [data.get(k) for _, k in COLUMN_MAP] + [
             "present" if data.get("has_cookie_banner") else "none",
             crm_push.form_sentence(data) or None,
+            data.get("business_scale"),
+            data.get("industry"),
+            *titles[:3],
         ]
         sets = ", ".join(f"{c} = %s" for c in cols)
     else:
@@ -156,6 +164,21 @@ async def analyse(domains, use_llm, concurrency):
                         # None plus a reason when the page could not be read.
                         data, err = await _stage03.scrape_one(
                             browser, company, use_llm)
+                        if data and use_llm:
+                            # No registry row exists for an inbound lead, so
+                            # scale and industry can only come from the site.
+                            # The tagline is the site's own description of
+                            # itself, distilled during the scrape. The consent
+                            # summary describes cookies, not the business, and
+                            # would tell the profiler nothing.
+                            industry, scale, conf, why = await asyncio.to_thread(
+                                llm.profile_company, company["company_name"],
+                                domain, data.get("company_tagline") or "", data)
+                            data["industry"] = industry
+                            data["business_scale"] = scale
+                            data["profile_reason"] = f"{conf}: {why}"
+                            data["target_titles"] = personas.predict(
+                                scale=scale, industry=industry, cin=None)
                         return domain, (data if data else {"error": err})
                     except Exception as exc:
                         return domain, {"error": f"{type(exc).__name__}: {exc}"[:200]}
@@ -233,7 +256,7 @@ def main():
         if data["has_cmp"]:
             cmp_ += 1
             print(f"  SKIP  {domain:<34} has a CMP: {data['cmp_name']}")
-        elif score == 0:
+        elif score == 100:
             clean += 1
             print(f"  WEAK  {domain:<34} no gap")
         else:

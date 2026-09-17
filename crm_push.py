@@ -20,13 +20,15 @@ import pymssql
 
 import config
 import db
+import personas
 import resolver
 
 # Their column -> how we fill it. CookieBanner and CollectsViaForm are
 # nvarchar, not flags, so they carry a readable phrase rather than 0/1.
 COLUMNS = ("CompanyName", "Website", "GapScore", "ContactName", "ContactTitle",
            "CompanyScale", "Industry", "TrackersPreConsent", "ThirdPartiesCount",
-           "CookieBanner", "CollectsViaForm", "ConsentFinding")
+           "CookieBanner", "CollectsViaForm", "ConsentFinding",
+           "TargetTitle1", "TargetTitle2", "TargetTitle3")
 
 
 def clip(value, n):
@@ -53,6 +55,25 @@ def form_sentence(c):
     return form
 
 
+def target_titles(c):
+    """
+    Three job titles worth hunting, for a lead with no contact attached.
+
+    Roughly 8 in 10 leads arrive without a name and sales sources those via
+    Lusha. Left blank when a contact was already found -- the titles are a
+    search instruction, and filling them next to a known person invites
+    someone to go looking for a second one they do not need.
+    """
+    if (c.get("contact_name") or "").strip():
+        return (None, None, None)
+    titles = personas.predict(
+        scale=c.get("business_scale"),
+        industry=c.get("linkedin_industry") or c.get("industrial_classification"),
+        cin=c.get("cin"),
+    )
+    return tuple(clip(t, 120) for t in (titles + [None, None, None])[:3])
+
+
 def to_row(c):
     form = form_sentence(c)
 
@@ -69,6 +90,7 @@ def to_row(c):
         clip("present" if c.get("has_cookie_banner") else "none", 100),
         form or None,
         c.get("consent_gap_summary"),
+        *target_titles(c),
     )
 
 

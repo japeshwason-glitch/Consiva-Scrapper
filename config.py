@@ -51,6 +51,9 @@ CRM_DB_NAME = os.environ.get("CRM_DB_NAME")
 CRM_DB_USER = os.environ.get("CRM_DB_USER")
 CRM_DB_PASSWORD = os.environ.get("CRM_DB_PASSWORD")
 CRM_DB_TABLE = os.environ.get("CRM_DB_TABLE", "dbo.CRM_Scrapper")
+# The inbound job's target. Schema-qualified, and configurable for the same
+# reason as the table above: staging and production need not agree on naming.
+CRM_LEADS_TABLE = os.environ.get("CRM_LEADS_TABLE", "crm.CrmLeads")
 
 APOLLO_ALLOW_EMAIL_REVEAL = os.environ.get("APOLLO_ALLOW_EMAIL_REVEAL", "0") not in ("0", "false", "False", "")
 

@@ -101,9 +101,10 @@ def reason_skipped(email):
 def fetch_leads(conn, since, until, force=False):
     """Leads created in the window that have not been analysed yet."""
     cur = conn.cursor()
+    table = config.CRM_LEADS_TABLE
     cur.execute(f"""
         SELECT Id, Email, Company, FirstName, LastName, JobTitle, CreatedAt
-        FROM crm.CrmLeads
+        FROM {table}
         WHERE IsDeleted = 0
           AND CreatedAt >= %s AND CreatedAt < %s
           {"" if force else "AND ConsentFinding IS NULL"}
@@ -139,7 +140,7 @@ def write_result(conn, lead_ids, data=None, note=None):
 
     cur = conn.cursor()
     for lead_id in lead_ids:
-        cur.execute(f"UPDATE crm.CrmLeads SET {sets} WHERE Id = %s",
+        cur.execute(f"UPDATE {config.CRM_LEADS_TABLE} SET {sets} WHERE Id = %s",
                     (*values, lead_id))
     conn.commit()
 

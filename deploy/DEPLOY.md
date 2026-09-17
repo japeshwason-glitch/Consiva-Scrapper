@@ -90,3 +90,50 @@ machine went down.
 | `GET /` | the dashboard UI |
 
 Interactive docs at `/docs`.
+
+## Moving from staging to a production CRM database
+
+Everything that names the sales team's database is an environment variable, so
+the switch is configuration, not code. But two things do not travel with a
+config change and will break silently if they are missed.
+
+### 1. Their SQL Server needs the scraper's columns
+
+The pipeline writes three columns that are not part of their original schema.
+Apply them before pointing at a new database, or every insert fails:
+
+    sqlcmd -S <host>,<port> -d <database> -U <user> -P <password> \
+           -i deploy/crm_schema.sql
+
+Idempotent, so it is safe to run against a database that already has them.
+
+### 2. GapScore reads the other way round now
+
+    a lead   is  GapScore < 100      (NOT > 0)
+    severe   is  GapScore <= 50      (NOT >= 50)
+
+100 is clean, 0 is worst. Anything still filtering `> 0` selects the compliant
+companies and excludes every real lead -- silently, with no error. The
+dashboard had exactly this bug and it was caught by a pre-deployment check
+rather than by anything failing.
+
+A production database with no rows yet needs no data conversion. One holding
+rows written on the old scale does: the statements at the bottom of
+`deploy/crm_schema.sql` are commented out on purpose, because `100 - GapScore`
+is correct exactly once.
+
+### Variables to change
+
+| variable | staging | production |
+|---|---|---|
+| `CRM_DB_HOST` | 45.114.245.10 | their production host |
+| `CRM_DB_PORT` | 15333 | |
+| `CRM_DB_NAME` | CookieConsentDB_Staging | their production database |
+| `CRM_DB_USER` / `CRM_DB_PASSWORD` | | |
+| `CRM_DB_TABLE` | dbo.CRM_Scrapper | only if renamed |
+| `CRM_LEADS_TABLE` | crm.CrmLeads | only if renamed |
+
+Nothing in our own Postgres changes. `delivered_at` still marks what has been
+sent, so pointing at a fresh production database does NOT re-send the leads
+already delivered to staging -- clear `delivered_at` deliberately if that is
+what you want.

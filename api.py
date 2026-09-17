@@ -171,8 +171,11 @@ def stats():
 def companies(q: str = "", max_score: int = 100, limit: int = Query(500, le=2000)):
     # max_score, not min_score: 100 is clean and 0 is worst, so "show me the
     # ones worth calling" is an upper bound. Renamed rather than inverted in
-    # place, so a caller still sending min_score gets an obvious error instead
-    # of silently receiving the compliant companies.
+    # place, because an old caller sending min_score would otherwise have
+    # received exactly the compliant companies it was trying to exclude.
+    # FastAPI ignores the unknown parameter instead, so such a caller falls
+    # back to the default and sees everything -- more rows than it asked for,
+    # never the wrong ones.
     where = [LIVE, "consent_gap_score IS NOT NULL", "consent_gap_score <= %s"]
     params = [max_score]
     if q:

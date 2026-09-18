@@ -105,7 +105,10 @@ services:
     command: python scheduler.py
 
   unbound:
-    image: mvance/unbound:latest
+    # mvance publishes separate builds per architecture: unbound is amd64,
+    # unbound-rpi is arm64. The GB10 is arm64, so the plain tag starts under
+    # emulation at best. Override with UNBOUND_IMAGE on an x86 host.
+    image: ${UNBOUND_IMAGE:-mvance/unbound-rpi:latest}
     restart: unless-stopped
     # Fixed address because Docker's `dns:` takes addresses, not service names.
     networks:

@@ -18,6 +18,7 @@ Built to survive the machine losing power mid-run:
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -78,6 +79,14 @@ EXCLUDE_INDUSTRY_SQL = EXCLUDE_INDUSTRY.replace("%", "%%")
 # on their own; this is long enough to cover a model reload, short enough that
 # a night can absorb several.
 INFRA_BACKOFF = 300
+
+# A run has to end before the next night's window, or the schedule drifts and
+# two days' work starts stacking up. At measured rates 500 leads takes ~8.5h
+# and 1,000 takes ~15h, but a run that never reaches its target would keep
+# cycling for ~27h -- past the next 02:00. Checked between cycles, never
+# mid-stage, so nothing in flight is lost and the next run resumes from the
+# status column as usual.
+MAX_RUN_HOURS = float(os.environ.get("MAX_RUN_HOURS", "20"))
 STATE_ORDER = ("maharashtra", "delhi", "chandigarh", "karnataka",
                "gujarat", "uttar pradesh")   # best resolution rate first
 
@@ -238,10 +247,16 @@ def main():
 
     skip_contacts = False
     stalled = 0
+    deadline = time.monotonic() + MAX_RUN_HOURS * 3600
     for i in range(1, args.max_cycles + 1):
         done = leads_today()
         if done >= args.target:
             print(f"\nTARGET MET: {done}/{args.target} leads delivered today")
+            return
+        if time.monotonic() > deadline:
+            print(f"\nDEADLINE: {MAX_RUN_HOURS:g}h elapsed, stopping at "
+                  f"{done}/{args.target} leads. Nothing is lost -- every row "
+                  f"is at its stage and the next run continues from there.")
             return
         scraped = scraped_today()
         if pending("discovered") == 0 and pending("resolved") == 0 \

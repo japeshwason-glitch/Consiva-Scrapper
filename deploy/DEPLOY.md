@@ -136,3 +136,22 @@ Nothing in our own Postgres changes. `delivered_at` still marks what has been
 sent, so pointing at a fresh production database does NOT re-send the leads
 already delivered to staging -- clear `delivered_at` deliberately if that is
 what you want.
+
+## Always build with the profile
+
+    docker compose --profile pipeline build      # NOT `docker compose build`
+    docker compose --profile pipeline up -d
+
+`docker compose build` silently skips any service behind a `profiles:` key,
+and the scheduler is behind `pipeline`. Without the flag it builds postgres,
+migrate and api, prints no warning, and leaves the scheduler on whatever image
+it had -- which on the first GB10 deploy meant it ran code 35 commits old and
+died on a bug that had been fixed days earlier. `docker compose ps` showed it
+"Up", because it was: just running the wrong thing.
+
+To confirm the scheduler is actually current after a build:
+
+    docker compose exec scheduler git -C /app rev-parse --short HEAD 2>/dev/null \
+      || docker compose exec scheduler python -c "import config; print(config.CRM_LEADS_DB_NAME)"
+
+An AttributeError there means the image predates that setting.

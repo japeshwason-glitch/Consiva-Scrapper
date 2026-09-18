@@ -105,17 +105,17 @@ services:
     command: python scheduler.py
 
   unbound:
-    # mvance publishes separate builds per architecture: unbound is amd64,
-    # unbound-rpi is arm64. The GB10 is arm64, so the plain tag starts under
-    # emulation at best. Override with UNBOUND_IMAGE on an x86 host.
-    image: ${UNBOUND_IMAGE:-mvance/unbound-rpi:latest}
+    # Built here rather than pulled: mvance/unbound is amd64 and
+    # mvance/unbound-rpi is 32-bit ARMv7, and this host is arm64 -- the second
+    # died with "exec format error". Alpine has a real arm64 base, so this
+    # builds natively wherever it runs.
+    build: ./deploy/unbound
     restart: unless-stopped
     # Fixed address because Docker's `dns:` takes addresses, not service names.
     networks:
       default:
         ipv4_address: 172.28.0.53
     volumes:
-      - ./deploy/unbound.conf:/opt/unbound/etc/unbound/unbound.conf:ro
     healthcheck:
       # Informational only -- nothing blocks on it. Uses whichever tool the
       # image ships; if neither exists the container still serves DNS fine.

@@ -71,10 +71,6 @@ EXCLUDE_INDUSTRY = (
     "industrial_classification NOT LIKE 'Manufacturing%' AND "
     "industrial_classification NOT LIKE 'Construction%'"
 )
-# The same clause reaches psycopg2, where a bare % is read as a placeholder
-# and blows up a parameterised query, and the stage's --where argument, where
-# it must stay a literal.
-EXCLUDE_INDUSTRY_SQL = EXCLUDE_INDUSTRY.replace("%", "%%")
 # How long to wait when DNS or the identity model is unreachable. Both restart
 # on their own; this is long enough to cover a model reload, short enough that
 # a night can absorb several.
@@ -109,6 +105,11 @@ def scraped_today():
 
 
 def pending(status, where=None):
+    # Same rule as db.get_pending: a literal % in a LIKE pattern is doubled
+    # here, so callers everywhere write plain SQL and never have to remember
+    # which of the two forms a given function wants.
+    if where:
+        where = where.replace("%", "%%")
     with db.get_cursor() as cur:
         cur.execute("SELECT COUNT(*) AS n FROM companies WHERE status=%s"
                     + (f" AND {where}" if where else ""), (status,))
@@ -177,7 +178,7 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
     if pending("discovered") > 0:
         for state in STATE_ORDER:
             if pending("discovered",
-                       f"state_code='{state}' AND {EXCLUDE_INDUSTRY_SQL}") == 0:
+                       f"state_code='{state}' AND {EXCLUDE_INDUSTRY}") == 0:
                 continue
             rc = run("02_resolve_domain.py",
                      ["--limit", str(SCREEN_BATCH // len(STATE_ORDER)),

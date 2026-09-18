@@ -125,6 +125,14 @@ def get_pending(status, limit=100, extra_where=None, extra_params=(), order=None
     query = "SELECT * FROM companies WHERE status = %s"
     params = [status]
     if extra_where:
+        # psycopg2 reads % as the start of a placeholder, so a literal one in
+        # a LIKE pattern has to be doubled or the driver miscounts parameters
+        # and raises IndexError. Callers write natural SQL -- "LIKE 'Foo%'" --
+        # and the doubling happens here, once, rather than in each of them.
+        # Skipped when the caller passes its own parameters, since then the %s
+        # markers are deliberate and must survive.
+        if not extra_params:
+            extra_where = extra_where.replace("%", "%%")
         query += f" AND {extra_where}"
         params.extend(extra_params)
     if order:

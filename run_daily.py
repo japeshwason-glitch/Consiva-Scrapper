@@ -76,13 +76,12 @@ EXCLUDE_INDUSTRY = (
 # a night can absorb several.
 INFRA_BACKOFF = 300
 
-# A run has to end before the next night's window, or the schedule drifts and
-# two days' work starts stacking up. At measured rates 500 leads takes ~8.5h
-# and 1,000 takes ~15h, but a run that never reaches its target would keep
-# cycling for ~27h -- past the next 02:00. Checked between cycles, never
-# mid-stage, so nothing in flight is lost and the next run resumes from the
-# status column as usual.
-MAX_RUN_HOURS = float(os.environ.get("MAX_RUN_HOURS", "20"))
+# A run has to end before the next window opens, or the schedule drifts and
+# two days' work starts stacking up. With a 06:30 start the window is a full
+# 24h, so the default stops at 05:30 -- an hour clear of the next start.
+# Checked between cycles, never mid-stage, so nothing in flight is lost and
+# the next run resumes from the status column as usual.
+MAX_RUN_HOURS = float(os.environ.get("MAX_RUN_HOURS", "23"))
 STATE_ORDER = ("maharashtra", "delhi", "chandigarh", "karnataka",
                "gujarat", "uttar pradesh")   # best resolution rate first
 

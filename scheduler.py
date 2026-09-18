@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 import db
 
-RUN_AT = os.environ.get("RUN_AT", "02:00")
+RUN_AT = os.environ.get("RUN_AT", "06:30")
 TARGET = int(os.environ.get("DAILY_LEAD_TARGET", "500"))
 
 # The inbound job runs first, in the same wake-up rather than on a timer of its

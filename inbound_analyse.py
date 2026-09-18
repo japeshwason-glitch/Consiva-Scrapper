@@ -31,6 +31,7 @@ from importlib import import_module
 
 import config
 import crm_push
+import fingerprints
 import llm
 import personas
 
@@ -257,7 +258,7 @@ def main():
         if data["has_cmp"]:
             cmp_ += 1
             print(f"  SKIP  {domain:<34} has a CMP: {data['cmp_name']}")
-        elif score == 0:
+        elif not fingerprints.is_lead_score(score):
             clean += 1
             print(f"  WEAK  {domain:<34} no gap")
         else:

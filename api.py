@@ -27,6 +27,7 @@ from pydantic import BaseModel
 
 import config
 import db
+import fingerprints
 
 app = FastAPI(
     title="Consiva pipeline",
@@ -154,8 +155,8 @@ def stats():
         total = cur.fetchone()["n"]
         cur.execute(f"""
             SELECT COUNT(*) FILTER (WHERE consent_gap_score IS NOT NULL) AS analysed,
-                   COUNT(*) FILTER (WHERE consent_gap_score > 0)        AS with_gap,
-                   COUNT(*) FILTER (WHERE consent_gap_score >= 50)      AS severe,
+                   COUNT(*) FILTER (WHERE {fingerprints.LEAD_SQL})      AS with_gap,
+                   COUNT(*) FILTER (WHERE {fingerprints.SEVERE_SQL})    AS severe,
                    COUNT(*) FILTER (WHERE has_cmp)                      AS has_cmp,
                    COUNT(*) FILTER (WHERE has_data_form)                AS with_form,
                    COUNT(*) FILTER (WHERE has_data_form
@@ -168,11 +169,12 @@ def stats():
 
 
 @app.get("/api/companies", tags=["dashboard"])
-def companies(q: str = "", min_score: int = 0, limit: int = Query(500, le=2000)):
-    # 100 is the worst and 0 is clean, so "worth calling" is a lower bound:
-    # min_score=50 means at least that much gap.
-    where = [LIVE, "consent_gap_score IS NOT NULL", "consent_gap_score >= %s"]
-    params = [min_score]
+def companies(q: str = "", max_score: int = fingerprints.ALIGNED,
+              limit: int = Query(500, le=2000)):
+    # 0 is the most severe gap and 100 is perfectly aligned, so "worth
+    # calling" is an upper bound: max_score=50 means at least that much gap.
+    where = [LIVE, "consent_gap_score IS NOT NULL", "consent_gap_score <= %s"]
+    params = [max_score]
     if q:
         where.append("(company_name ILIKE %s OR resolved_domain ILIKE %s)")
         params += [f"%{q}%", f"%{q}%"]
@@ -184,7 +186,7 @@ def companies(q: str = "", min_score: int = 0, limit: int = Query(500, le=2000))
                                has_data_form, contact_name, contact_title,
                                industrial_classification, linkedin_employee_count
                         FROM companies WHERE {' AND '.join(where)}
-                        ORDER BY consent_gap_score DESC, company_name ASC
+                        ORDER BY {fingerprints.WORST_FIRST_SQL}, company_name ASC
                         LIMIT %s""", params)
         return [dict(r) for r in cur.fetchall()]
 

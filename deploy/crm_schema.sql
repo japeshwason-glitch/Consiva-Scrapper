@@ -37,13 +37,17 @@ GO
 -- ---------------------------------------------------------------------------
 -- 3. GapScore polarity -- READ THIS BEFORE RUNNING IT
 -- ---------------------------------------------------------------------------
--- GapScore reads 100 = WORST, 0 = clean. Higher means a bigger gap.
+-- GapScore is ALIGNMENT with DPDP, not a quantity of breach:
 --
---     a lead   is  GapScore > 0
---     severe   is  GapScore >= 50
+--     0   = most severe gap
+--     100 = perfectly aligned, not a lead
 --
--- This was briefly inverted (15-18 Sep 2026) so that 100 meant clean. It is
--- back to the original direction: the column measures the size of a gap.
+--     a lead   is  GapScore < 100
+--     severe   is  GapScore <= 50
+--
+-- Filtering "> 0" returns the compliant companies and excludes every real
+-- lead, silently. In our own code the direction is defined once, in
+-- fingerprints.ALIGNED, and nothing compares against a literal.
 --
 -- The statement below converts rows written while the scale was inverted. It
 -- is correct exactly once -- run it twice and every score is silently back

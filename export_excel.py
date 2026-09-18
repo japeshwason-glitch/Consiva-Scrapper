@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 
 import db
+import fingerprints
 
 # What someone actually uses when they open the file. Everything else is one
 # click away in the dashboard, and the cookie detail is on its own sheet.
@@ -99,7 +100,7 @@ def build(columns):
             score = c.get("consent_gap_score")
             c = dict(c)
             c["verdict"] = ("Not a lead — has CMP" if c.get("has_cmp")
-                            else "LEAD" if (score or 0) > 0
+                            else "LEAD" if fingerprints.is_lead_score(score)
                             else "Not a lead — no gap found")
             cap = c.get("paidup_capital")
             c["paidup_capital_cr"] = round(float(cap) / 1e7, 2) if cap is not None else None

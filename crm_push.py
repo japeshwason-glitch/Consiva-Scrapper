@@ -20,6 +20,7 @@ import pymssql
 
 import config
 import db
+import fingerprints
 import personas
 import resolver
 
@@ -133,7 +134,7 @@ def main():
     leads = [c for c in db.get_pending(
                  "exported", limit=limit * 5,
                  extra_where="delivered_at IS NULL AND has_cmp = false "
-                             "AND consent_gap_score > 0" + verified)][:limit]
+                             f"AND {fingerprints.LEAD_SQL}" + verified)][:limit]
     if not leads:
         sys.exit("nothing at status='exported' waiting to be delivered")
 

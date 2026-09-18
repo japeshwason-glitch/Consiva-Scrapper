@@ -127,7 +127,7 @@ def main():
     # paid-up capital and NIC alone. scale_confidence says so honestly rather
     # than implying a precision the inputs cannot support.
     companies = db.get_pending("scraped", limit=args.limit,
-                               extra_where="has_cmp = false AND consent_gap_score > 0")
+                               extra_where=f"has_cmp = false AND {fingerprints.LEAD_SQL}")
     if not companies:
         print("nothing at status='scraped' with a consent gap")
         return

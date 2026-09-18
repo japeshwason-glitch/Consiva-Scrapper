@@ -80,7 +80,7 @@ def main():
     # never reach the CRM, and never count toward the daily target -- while
     # still showing as pending work, so run_daily keeps cycling and delivers
     # nothing. Contact enrichment is additive, never a gate.
-    gap = "has_cmp = false AND consent_gap_score > 0"
+    gap = f"has_cmp = false AND {fingerprints.LEAD_SQL}"
     companies = []
     for status in ("contact_done", "contact_failed", "classified"):
         companies += db.get_pending(status, limit=args.limit, extra_where=gap)

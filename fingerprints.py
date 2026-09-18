@@ -414,6 +414,28 @@ def analyse_cookies(cookies, site_domain):
     }
 
 
+# --- the one place the score's direction is defined -----------------------
+# 0 = most severe, 100 = perfectly aligned. Every comparison in the codebase
+# goes through these, so changing direction is changing this block, not
+# hunting through nine files for literals.
+ALIGNED = 100          # nothing to sell: no gap, or already runs a CMP
+SEVERE_AT = 50         # at or below this is a severe gap
+
+# SQL fragments, for the queries that cannot import a Python predicate.
+LEAD_SQL = f"consent_gap_score < {ALIGNED}"
+SEVERE_SQL = f"consent_gap_score <= {SEVERE_AT}"
+WORST_FIRST_SQL = "consent_gap_score ASC"
+
+
+def is_lead_score(score):
+    """True if this score describes a company worth approaching."""
+    return score is not None and score < ALIGNED
+
+
+def is_severe_score(score):
+    return score is not None and score <= SEVERE_AT
+
+
 def gap_score(has_cmp, analysis, banner, policy):
     """
     0-100 from the full cookie picture. Supersedes consent_gap_score(), which
@@ -576,13 +598,20 @@ def form_gap(forms):
     }
 
 
-def gap_score_with_forms(has_cmp, analysis, banner, policy, forms=None):
+def consent_score(has_cmp, analysis, banner, policy, forms=None):
     """
-    0-100 where 100 is the WORST and 0 is clean. Higher means a bigger gap.
+    0-100 where 0 is the MOST SEVERE gap and 100 is perfectly aligned.
 
-    The number measures the size of the gap, which is what the field is
-    called. A site with nothing wrong scores 0; one tracking heavily before
-    consent with a form taking personal data scores 100.
+    Read it as alignment with DPDP, not as a quantity of breach: 100 means
+    nothing to sell and 0 means every problem we measure at once. Internally
+    the parts are still accumulated as gap POINTS -- more points, more wrong --
+    and inverted once at the end, so the weighting is independent of which way
+    the reported number runs.
+
+    Anything that compares against this must use the constants below rather
+    than a literal. The polarity has changed twice, and each time the misses
+    were silent: a filter left the wrong way round returns the compliant
+    companies and excludes every real lead, with nothing raising an error.
 
     Supersedes gap_score(): that returned 0 whenever a site set no tracking
     cookies, which wrote off 58% of scraped sites -- including any that quietly
@@ -598,11 +627,11 @@ def gap_score_with_forms(has_cmp, analysis, banner, policy, forms=None):
     """
     base = gap_score(has_cmp, analysis, banner, policy)
     if has_cmp:
-        return 0        # they already run a CMP; no gap, not a lead
+        return ALIGNED  # they already run a CMP; not a lead
 
     form = forms or {}
     if not form.get("has_data_form"):
-        return base
+        return ALIGNED - base
 
     extra = 0
     if not form.get("consent_checkbox"):
@@ -612,4 +641,4 @@ def gap_score_with_forms(has_cmp, analysis, banner, policy, forms=None):
     if form.get("external_hosts"):
         extra += 10
 
-    return int(min(100, base + extra))
+    return ALIGNED - int(min(100, base + extra))

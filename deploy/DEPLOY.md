@@ -107,14 +107,14 @@ Apply them before pointing at a new database, or every insert fails:
 
 Idempotent, so it is safe to run against a database that already has them.
 
-### 2. GapScore: 100 is the worst
+### 2. GapScore: 0 is the worst, 100 is aligned
 
-    a lead   is  GapScore > 0
-    severe   is  GapScore >= 50
+    a lead   is  GapScore < 100
+    severe   is  GapScore <= 50
 
-100 is the worst and 0 is clean -- the number measures the size of the gap.
-This was inverted between 15 and 18 September 2026 and then put back; anything
-written against that window's convention needs checking.
+The score is ALIGNMENT with DPDP: 0 is the most severe gap, 100 is perfectly
+aligned and not a lead. Filtering "> 0" returns the compliant companies and
+excludes every real lead, with no error to notice.
 
 A production database with no rows yet needs no data conversion. One holding
 rows written on the old scale does: the statements at the bottom of

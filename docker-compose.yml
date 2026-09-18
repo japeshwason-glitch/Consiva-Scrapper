@@ -35,6 +35,10 @@ services:
   migrate:
     build: .
     env_file: .env.docker
+    environment:
+      # Containers are UTC unless told otherwise, which made RUN_AT=06:30 fire
+      # at noon IST and printed every log line 5h30m off the host's clock.
+      TZ: ${TZ:-Asia/Kolkata}
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,6 +51,10 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env.docker
+    environment:
+      # Containers are UTC unless told otherwise, which made RUN_AT=06:30 fire
+      # at noon IST and printed every log line 5h30m off the host's clock.
+      TZ: ${TZ:-Asia/Kolkata}
     # Four worker processes. The API is I/O-bound on Postgres and each worker
     # holds its own connection pool, so this is about concurrent requests, not
     # CPU. Override with API_WORKERS.
@@ -71,6 +79,10 @@ services:
     profiles: ["pipeline"]      # only starts with --profile pipeline
     restart: unless-stopped
     env_file: .env.docker
+    environment:
+      # Containers are UTC unless told otherwise, which made RUN_AT=06:30 fire
+      # at noon IST and printed every log line 5h30m off the host's clock.
+      TZ: ${TZ:-Asia/Kolkata}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # Resolve website lookups against public DNS rather than the office

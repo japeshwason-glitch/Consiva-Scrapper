@@ -8,6 +8,11 @@ FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
 WORKDIR /app
 
 # Dependencies first, so a code change does not reinstall them.
+# tzdata, or the TZ environment variable has no zone database to resolve
+# against and the container silently stays on UTC.
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

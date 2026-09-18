@@ -107,15 +107,14 @@ Apply them before pointing at a new database, or every insert fails:
 
 Idempotent, so it is safe to run against a database that already has them.
 
-### 2. GapScore reads the other way round now
+### 2. GapScore: 100 is the worst
 
-    a lead   is  GapScore < 100      (NOT > 0)
-    severe   is  GapScore <= 50      (NOT >= 50)
+    a lead   is  GapScore > 0
+    severe   is  GapScore >= 50
 
-100 is clean, 0 is worst. Anything still filtering `> 0` selects the compliant
-companies and excludes every real lead -- silently, with no error. The
-dashboard had exactly this bug and it was caught by a pre-deployment check
-rather than by anything failing.
+100 is the worst and 0 is clean -- the number measures the size of the gap.
+This was inverted between 15 and 18 September 2026 and then put back; anything
+written against that window's convention needs checking.
 
 A production database with no rows yet needs no data conversion. One holding
 rows written on the old scale does: the statements at the bottom of

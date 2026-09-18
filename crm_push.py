@@ -133,7 +133,7 @@ def main():
     leads = [c for c in db.get_pending(
                  "exported", limit=limit * 5,
                  extra_where="delivered_at IS NULL AND has_cmp = false "
-                             "AND consent_gap_score < 100" + verified)][:limit]
+                             "AND consent_gap_score > 0" + verified)][:limit]
     if not leads:
         sys.exit("nothing at status='exported' waiting to be delivered")
 

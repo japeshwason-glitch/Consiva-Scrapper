@@ -99,7 +99,7 @@ def build(columns):
             score = c.get("consent_gap_score")
             c = dict(c)
             c["verdict"] = ("Not a lead — has CMP" if c.get("has_cmp")
-                            else "LEAD" if (100 if score is None else score) < 100
+                            else "LEAD" if (score or 0) > 0
                             else "Not a lead — no gap found")
             cap = c.get("paidup_capital")
             c["paidup_capital_cr"] = round(float(cap) / 1e7, 2) if cap is not None else None

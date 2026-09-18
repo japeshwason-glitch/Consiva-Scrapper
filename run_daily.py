@@ -187,7 +187,7 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
     if pending("resolved") or dry_run:
         run("03_scrape_playwright.py",
             ["--limit", "500", "--concurrency", str(SCRAPE_CONCURRENCY)], dry_run)
-    if pending("scraped", "has_cmp = false AND consent_gap_score < 100") or dry_run:
+    if pending("scraped", "has_cmp = false AND consent_gap_score > 0") or dry_run:
         run("05_classify_scale.py", ["--limit", "500"], dry_run)
     # Contact enrichment is additive -- stage 07 exports a lead whether or not
     # this ran -- so a spent allowance is a reason to skip it, never to stall.
@@ -202,7 +202,7 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
     # Apollo returns nothing for most small Indian firms. Gating on
     # contact_done alone means a cycle where every lookup misses exports
     # nothing at all, which is the same bug stage 07 itself was fixed for.
-    gap = "has_cmp = false AND consent_gap_score < 100"
+    gap = "has_cmp = false AND consent_gap_score > 0"
     if pending("contact_done", gap) or pending("contact_failed", gap) or dry_run:
         run("07_export_crm.py", [], dry_run)
     if pending("exported", "delivered_at IS NULL") or dry_run:

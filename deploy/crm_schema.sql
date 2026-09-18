@@ -37,20 +37,19 @@ GO
 -- ---------------------------------------------------------------------------
 -- 3. GapScore polarity -- READ THIS BEFORE RUNNING IT
 -- ---------------------------------------------------------------------------
--- GapScore now reads 100 = clean, 0 = worst. Anything reading these tables
--- must use:
+-- GapScore reads 100 = WORST, 0 = clean. Higher means a bigger gap.
 --
---     a lead   is  GapScore < 100      (NOT > 0)
---     severe   is  GapScore <= 50      (NOT >= 50)
+--     a lead   is  GapScore > 0
+--     severe   is  GapScore >= 50
 --
--- A dashboard still filtering "> 0" selects the compliant companies and
--- excludes every real lead.
+-- This was briefly inverted (15-18 Sep 2026) so that 100 meant clean. It is
+-- back to the original direction: the column measures the size of a gap.
 --
--- The statement below converts rows written on the OLD scale. It is correct
--- exactly once -- run it twice and every score is silently back where it
--- started, with nothing in the data to show which way round the table is. It
--- is left commented deliberately. Skip it entirely for a fresh production
--- database, which has no old-scale rows.
+-- The statement below converts rows written while the scale was inverted. It
+-- is correct exactly once -- run it twice and every score is silently back
+-- where it started, with nothing in the data to show which way round the table
+-- is. Left commented deliberately, and unnecessary for any database the
+-- pipeline has not written to during 15-18 Sep 2026.
 --
 -- UPDATE dbo.CRM_Scrapper SET GapScore = 100 - GapScore WHERE GapScore IS NOT NULL;
 -- UPDATE crm.CrmLeads     SET GapScore = 100 - GapScore WHERE GapScore IS NOT NULL;

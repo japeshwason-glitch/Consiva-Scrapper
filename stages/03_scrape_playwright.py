@@ -309,7 +309,7 @@ async def scrape_one(browser, company, use_llm):
         analysis = fingerprints.analyse_cookies(cookies, final_domain)
         form_gap = fingerprints.form_gap(forms)
         form_embed = fingerprints.detect_form_embed(blob)
-        gap_score = fingerprints.consent_score(
+        gap_score = fingerprints.gap_score_with_forms(
             has_cmp, analysis, banner, policy, form_gap)
 
         result = {
@@ -463,7 +463,7 @@ async def run(companies, use_llm, dry_run, concurrency):
                 score = data["consent_gap_score"]
                 if data["has_cmp"]:
                     tag, gate, note = "SKIP", "NOT A LEAD", data["cmp_name"]
-                elif score == 100:
+                elif score == 0:
                     tag, gate, note = "WEAK", "no gap", "no pre-consent trackers"
                 else:
                     tag, gate = "OK  ", f"gap {score}"
@@ -515,8 +515,8 @@ def main():
     results = asyncio.run(run(companies, use_llm, args.dry_run, args.concurrency))
 
     ok = [r for r in results if r and not r.get("error")]
-    leads = [r for r in ok if not r["has_cmp"] and r["consent_gap_score"] < 100]
-    weak = [r for r in ok if not r["has_cmp"] and r["consent_gap_score"] == 100]
+    leads = [r for r in ok if not r["has_cmp"] and r["consent_gap_score"] > 0]
+    weak = [r for r in ok if not r["has_cmp"] and r["consent_gap_score"] == 0]
     cmp_hits = [r for r in ok if r["has_cmp"]]
     print(f"\nscraped {len(ok)}/{len(companies)} | {len(leads)} leads with a gap | "
           f"{len(weak)} no gap | {len(cmp_hits)} not_a_lead | "

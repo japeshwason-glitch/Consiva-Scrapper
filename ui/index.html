@@ -117,11 +117,11 @@
 const {useState,useEffect} = React;
 const API = "";
 
-// 100 is clean, 0 is worst -- red at the bottom of the scale, not the top.
+// 100 is the worst and 0 is clean -- red at the top of the scale.
 const sevColor = s =>
   s == null ? "var(--line)"
-  : s <= 30 ? "var(--crit)" : s <= 60 ? "var(--warn)"
-  : s < 100 ? "var(--ok)" : "var(--line)";
+  : s >= 70 ? "var(--crit)" : s >= 40 ? "var(--warn)"
+  : s > 0 ? "var(--ok)" : "var(--line)";
 const fmt = v => (v === null || v === undefined || v === "" ? "—" : String(v));
 const crore = v => v == null ? "—" : "₹" + (v/10000000).toFixed(2) + " cr";
 
@@ -160,7 +160,7 @@ function Detail({cin}){
     collects through forms, and the contact.</div>;
   if(!c) return <div className="empty">Loading…</div>;
 
-  const isLead = !c.has_cmp && c.consent_gap_score < 100;
+  const isLead = !c.has_cmp && c.consent_gap_score > 0;
   return (
     <div>
       <h1>{c.company_name}</h1>
@@ -178,9 +178,9 @@ function Detail({cin}){
           <div className="gaplabel">consent gap score</div>
           <div style={{fontSize:13}}>
             {c.has_cmp ? `Runs ${c.cmp_name} — not a lead`
-             : c.consent_gap_score <= 30 ? "Severe — trackers and no working consent"
-             : c.consent_gap_score <= 60 ? "Clear gap worth approaching"
-             : c.consent_gap_score < 100 ? "Minor gap" : "No measurable gap"}
+             : c.consent_gap_score >= 70 ? "Severe — trackers and no working consent"
+             : c.consent_gap_score >= 40 ? "Clear gap worth approaching"
+             : c.consent_gap_score > 0 ? "Minor gap" : "No measurable gap"}
           </div>
         </div>
       </div>
@@ -260,17 +260,17 @@ function App(){
   const [stats,setStats] = useState(null);
   const [rows,setRows] = useState([]);
   const [q,setQ] = useState("");
-  const [maxScore,setMaxScore] = useState(100);
+  const [minScore,setMinScore] = useState(0);
   const [sel,setSel] = useState(null);
 
   useEffect(()=>{ fetch(`${API}/api/stats`).then(r=>r.json()).then(setStats); },[]);
   useEffect(()=>{
     const t = setTimeout(()=>{
-      fetch(`${API}/api/companies?q=${encodeURIComponent(q)}&max_score=${maxScore}`)
+      fetch(`${API}/api/companies?q=${encodeURIComponent(q)}&min_score=${minScore}`)
         .then(r=>r.json()).then(d=>{ setRows(d); if(!sel && d.length) setSel(d[0].cin); });
     }, 180);
     return ()=>clearTimeout(t);
-  },[q,maxScore]);
+  },[q,minScore]);
 
   return (<>
     <header>
@@ -290,11 +290,11 @@ function App(){
         <div className="tools">
           <input type="search" placeholder="Search company or domain…"
                  value={q} onChange={e=>setQ(e.target.value)} aria-label="Search"/>
-          <select value={maxScore} onChange={e=>setMaxScore(+e.target.value)} aria-label="Worst score to show">
-            <option value="100">All</option>
-            <option value="99">With a gap</option>
-            <option value="60">60 or worse</option>
-            <option value="30">Severe — 30 or worse</option>
+          <select value={minScore} onChange={e=>setMinScore(+e.target.value)} aria-label="Minimum gap score">
+            <option value="0">All</option>
+            <option value="1">With a gap</option>
+            <option value="40">40+</option>
+            <option value="70">Severe 70+</option>
           </select>
         </div>
         <div className="rows">

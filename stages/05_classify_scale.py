@@ -42,6 +42,16 @@ STARTUP_MAX_AGE_YEARS = 5
 STARTUP_MAX_EMPLOYEES = 50
 
 
+# The MCA export uses 1111-11-11 where the registration date is not known --
+# 129 rows in the corpus carry it. Parsed literally it makes a company 915
+# years old, and age is one of the signals the scale decision reads, so those
+# rows were classified on a number that means "no data".
+#
+# The oldest real company on the register dates from the 1860s, so anything
+# before 1850 is a placeholder rather than a date.
+EARLIEST_PLAUSIBLE_YEAR = 1850
+
+
 def years_since(registration_date):
     if not registration_date:
         return None
@@ -49,8 +59,15 @@ def years_since(registration_date):
         year, month, day = (int(x) for x in str(registration_date)[:10].split("-"))
     except ValueError:
         return None
-    today = date.today()
-    return (today - date(year, month, day)).days / 365.25
+    if year < EARLIEST_PLAUSIBLE_YEAR:
+        return None       # a placeholder, not an age
+    try:
+        registered = date(year, month, day)
+    except ValueError:
+        return None       # 0000-00-00 and friends
+    if registered > date.today():
+        return None       # a future date is data entry, not a company
+    return (date.today() - registered).days / 365.25
 
 
 def classify(company):

@@ -19,27 +19,35 @@ from pathlib import Path
 
 import db
 
-FIELDS = ("cin", "company_name", "registered_address", "reg_state",
-          "industrial_classification", "company_class", "registration_date")
 
-ap = argparse.ArgumentParser(description=__doc__)
-ap.add_argument("--limit", type=int, default=10000)
-ap.add_argument("--out", help="output path (default: data/exports/)")
-args = ap.parse_args()
 
-rows = db.get_pending("no_site_found", limit=args.limit)
-if not rows:
-    sys.exit("nothing at status='no_site_found'")
+def main():
+    FIELDS = ("cin", "company_name", "registered_address", "reg_state",
+              "industrial_classification", "company_class", "registration_date")
 
-path = Path(args.out) if args.out else (
-    Path(__file__).parent / "data" / "exports" /
-    f"no_site_found_{date.today()}.csv")
-path.parent.mkdir(parents=True, exist_ok=True)
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--limit", type=int, default=10000)
+    ap.add_argument("--out", help="output path (default: data/exports/)")
+    args = ap.parse_args()
 
-with open(path, "w", newline="", encoding="utf-8") as fh:
-    w = csv.DictWriter(fh, fieldnames=FIELDS, extrasaction="ignore")
-    w.writeheader()
-    for r in rows:
-        w.writerow({k: r.get(k) for k in FIELDS})
+    rows = db.get_pending("no_site_found", limit=args.limit)
+    if not rows:
+        sys.exit("nothing at status='no_site_found'")
 
-print(f"wrote {len(rows)} rows -> {path}")
+    path = Path(args.out) if args.out else (
+        Path(__file__).parent / "data" / "exports" /
+        f"no_site_found_{date.today()}.csv")
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=FIELDS, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k) for k in FIELDS})
+
+    print(f"wrote {len(rows)} rows -> {path}")
+
+
+
+if __name__ == "__main__":
+    main()

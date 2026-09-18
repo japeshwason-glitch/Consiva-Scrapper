@@ -96,7 +96,6 @@ def build(columns):
     for status in ("scraped", "linkedin_done", "classified",
                    "contact_done", "contact_failed", "exported", "not_a_lead"):
         for c in db.get_pending(status, limit=100000):
-            site = c.get("final_domain") or c.get("resolved_domain")
             score = c.get("consent_gap_score")
             c = dict(c)
             c["verdict"] = ("Not a lead — has CMP" if c.get("has_cmp")

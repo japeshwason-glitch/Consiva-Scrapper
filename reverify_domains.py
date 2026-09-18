@@ -18,7 +18,6 @@ deleted.
 
 import argparse
 import re
-import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests

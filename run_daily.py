@@ -23,7 +23,6 @@ import sys
 import time
 from pathlib import Path
 
-import config
 import db
 import fingerprints
 
@@ -102,7 +101,7 @@ def scraped_today():
 
 def pending(status, where=None):
     with db.get_cursor() as cur:
-        cur.execute(f"SELECT COUNT(*) AS n FROM companies WHERE status=%s"
+        cur.execute("SELECT COUNT(*) AS n FROM companies WHERE status=%s"
                     + (f" AND {where}" if where else ""), (status,))
         return cur.fetchone()["n"]
 

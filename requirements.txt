@@ -17,3 +17,10 @@ psycopg2-binary==2.9.12
 fastapi==0.141.1
 uvicorn==0.52.4
 pymssql==2.4.1
+
+# Both arrive transitively -- urllib3 with requests, pydantic with fastapi --
+# but stage 02 and api.py import them directly, so they are declared rather
+# than inherited. A parent dropping or bumping them should not silently change
+# what we import.
+urllib3==2.7.0
+pydantic==2.13.5

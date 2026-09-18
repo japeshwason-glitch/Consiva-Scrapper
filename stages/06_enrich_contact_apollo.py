@@ -132,6 +132,22 @@ INDUSTRY_PERSONA_BOOST = {
 }
 
 
+# Headcount adjustment, applied only when LinkedIn enrichment has actually
+# produced a number. Stage 04 is out of the chain, so this is usually skipped
+# -- but 28 rows still carry a count from when it ran, and the two constants
+# below were referenced without ever being defined. Any of those rows reaching
+# this stage raised NameError; the branch simply had not been exercised.
+LARGE_COMPANY_EMPLOYEES = 250   # above this, a founder is not taking the call
+
+# At that size the website and its tags belong to a marketing or digital
+# function rather than to the founder, so those titles are worth more.
+LARGE_COMPANY_BOOST = (
+    "marketing", "digital", "cmo", "growth", "brand",
+    "chief information", "cio", "it head", "head of it", "head it",
+    "data protection", "dpo", "privacy", "compliance",
+)
+
+
 def title_score(title, employees, industry=None):
     """
     How good a target this person is. Industry shifts which persona family

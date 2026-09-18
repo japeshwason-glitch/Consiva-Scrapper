@@ -9,7 +9,7 @@ on consent_gap_score and sit at the top of any list sorted by severity.
 Rows the scorer rejects are moved to 'resolve_failed'; their scrape findings
 stay on the row for audit.
 """
-import re, sys
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests, urllib3
 import db, fingerprints, llm

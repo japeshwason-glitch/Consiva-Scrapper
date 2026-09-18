@@ -25,7 +25,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import config
 import db
 import fingerprints
 

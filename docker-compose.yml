@@ -115,7 +115,6 @@ services:
     networks:
       default:
         ipv4_address: 172.28.0.53
-    volumes:
     healthcheck:
       # Informational only -- nothing blocks on it. Uses whichever tool the
       # image ships; if neither exists the container still serves DNS fine.

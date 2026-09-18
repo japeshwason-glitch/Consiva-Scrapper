@@ -210,7 +210,7 @@ def main():
            else date.today()) + timedelta(days=1)
     start = end - timedelta(days=args.days)
 
-    conn = crm_push.connect()
+    conn = crm_push.connect(config.CRM_LEADS_DB_NAME)
     leads = fetch_leads(conn, start, end, force=args.force)
     if not leads:
         print(f"no unanalysed leads created between {start} and {end}")
@@ -222,6 +222,7 @@ def main():
         domain = domain_of(lead["Email"])
         (by_domain[domain] if domain else skipped).append(lead)
 
+    print(f"writing to {config.CRM_LEADS_DB_NAME}.{config.CRM_LEADS_TABLE}")
     print(f"{len(leads)} lead(s) in {start}..{end - timedelta(days=1)}: "
           f"{len(by_domain)} distinct company domain(s), "
           f"{len(skipped)} without one")

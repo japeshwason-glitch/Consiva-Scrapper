@@ -95,7 +95,14 @@ def to_row(c):
     )
 
 
-def connect():
+def connect(database=None):
+    """
+    A connection to the sales team's SQL Server.
+
+    `database` overrides which one, so the inbound job can write to the live
+    database while the MCA scraper is still pointed at staging. Same server,
+    same credentials -- only the database differs.
+    """
     missing = [k for k in ("CRM_DB_HOST", "CRM_DB_NAME", "CRM_DB_USER", "CRM_DB_PASSWORD")
                if not getattr(config, k)]
     if missing:
@@ -103,7 +110,7 @@ def connect():
     return pymssql.connect(
         server=config.CRM_DB_HOST, port=str(config.CRM_DB_PORT),
         user=config.CRM_DB_USER, password=config.CRM_DB_PASSWORD,
-        database=config.CRM_DB_NAME, timeout=30, login_timeout=20)
+        database=database or config.CRM_DB_NAME, timeout=30, login_timeout=20)
 
 
 def main():

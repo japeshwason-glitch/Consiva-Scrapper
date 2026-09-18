@@ -54,6 +54,11 @@ CRM_DB_TABLE = os.environ.get("CRM_DB_TABLE", "dbo.CRM_Scrapper")
 # The inbound job's target. Schema-qualified, and configurable for the same
 # reason as the table above: staging and production need not agree on naming.
 CRM_LEADS_TABLE = os.environ.get("CRM_LEADS_TABLE", "crm.CrmLeads")
+# The two jobs can target different DATABASES on the same server: the MCA
+# scraper may still be pointed at staging while inbound leads, which are real
+# people who filled in a form, go to the live one. Falls back to CRM_DB_NAME
+# when unset, so a single-database setup needs no extra variable.
+CRM_LEADS_DB_NAME = os.environ.get("CRM_LEADS_DB_NAME") or CRM_DB_NAME
 
 APOLLO_ALLOW_EMAIL_REVEAL = os.environ.get("APOLLO_ALLOW_EMAIL_REVEAL", "0") not in ("0", "false", "False", "")
 

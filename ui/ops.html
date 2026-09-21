@@ -1,0 +1,226 @@
+<title>Pipeline Activity</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --bg:#F4F6F5; --panel:#FFFFFF; --ink:#161B1A; --muted:#65706D;
+  --line:#DDE3E1; --line-soft:#EAEFED;
+  --accent:#1F6F5C; --accent-soft:#E4F0EC;
+  --crit:#B3402F; --warn:#B07A16; --ok:#2E7D5B; --chip:#EFF3F1;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#101413; --panel:#171D1B; --ink:#E8EDEB; --muted:#93A09C;
+    --line:#26302D; --line-soft:#1E2725; --accent:#57B396; --accent-soft:#1B2E28;
+    --crit:#E2705C; --warn:#D9A441; --ok:#57B396; --chip:#1E2725;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101413; --panel:#171D1B; --ink:#E8EDEB; --muted:#93A09C;
+  --line:#26302D; --line-soft:#1E2725; --accent:#57B396; --accent-soft:#1B2E28;
+  --crit:#E2705C; --warn:#D9A441; --ok:#57B396; --chip:#1E2725;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+     font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+header{display:flex;align-items:baseline;gap:14px;padding:14px 20px;
+       border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+.brand{font-weight:700;letter-spacing:-.01em;font-size:15px}
+.brand span{color:var(--muted);font-weight:400;margin-left:8px;font-size:13px}
+header .right{margin-left:auto;display:flex;gap:14px;align-items:center;
+              font-family:var(--mono);font-size:12px;color:var(--muted)}
+main{padding:20px;max-width:1180px;margin:0 auto;display:grid;gap:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.panel h2{margin:0;padding:12px 16px;font-size:12px;letter-spacing:.09em;
+          text-transform:uppercase;color:var(--muted);font-weight:600;
+          border-bottom:1px solid var(--line-soft)}
+.panel .body{padding:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+       background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.tile{background:var(--panel);padding:14px 16px}
+.tile .n{font-size:28px;font-weight:700;letter-spacing:-.02em;
+         font-variant-numeric:tabular-nums;line-height:1.1}
+.tile .l{font-size:11.5px;color:var(--muted);margin-top:3px}
+.bars{display:flex;align-items:flex-end;gap:6px;height:150px;padding-top:6px}
+.bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+     align-items:center;gap:5px;min-width:0}
+.bar .v{width:100%;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px}
+.bar .t{font-family:var(--mono);font-size:10px;color:var(--muted);
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.bar .c{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+   color:var(--muted);font-weight:600;padding:0 12px 8px 0;border-bottom:1px solid var(--line)}
+td{padding:7px 12px 7px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
+td.m,th.m{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 7px;
+      border-radius:3px;white-space:nowrap}
+.ok{background:var(--accent-soft);color:var(--ok)}
+.bad{background:color-mix(in srgb,var(--crit) 16%,transparent);color:var(--crit)}
+.wait{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.q{display:flex;flex-wrap:wrap;gap:8px}
+.qi{background:var(--chip);border-radius:5px;padding:8px 12px;min-width:112px}
+.qi .n{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums}
+.qi .l{font-size:11px;color:var(--muted)}
+.note{color:var(--muted);font-size:12px;max-width:74ch}
+.scroll{overflow-x:auto}
+.err{padding:16px;color:var(--crit);font-family:var(--mono);font-size:12.5px}
+@media (max-width:640px){ main{padding:12px} .bars{height:110px} }
+</style>
+
+<header>
+  <div class="brand">Pipeline activity <span>consiva lead pipeline</span></div>
+  <div class="right">
+    <span id="clock">—</span>
+    <span id="refreshed">loading…</span>
+  </div>
+</header>
+
+<main>
+  <div class="tiles" id="tiles"></div>
+
+  <div class="panel">
+    <h2>Leads delivered per day</h2>
+    <div class="body">
+      <div class="bars" id="bars"></div>
+      <p class="note" style="margin:14px 0 0">
+        A day with no bar is a day the pipeline delivered nothing — either it did
+        not run, or it ran and found nothing to send. The run log below says which.
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Queue</h2>
+    <div class="body"><div class="q" id="queue"></div>
+      <p class="note" style="margin:14px 0 0">
+        Work flows left to right. <b>blocked</b> is companies a bot wall stopped us
+        reading; they are retried with a browser. <b>no_site_found</b> is the
+        worklist for a search-based pass — those are not failures.
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Recent stage runs</h2>
+    <div class="scroll"><table id="runs">
+      <thead><tr>
+        <th>started</th><th>stage</th><th class="m">took</th>
+        <th class="m">leads after</th><th>result</th><th>last line</th>
+      </tr></thead><tbody></tbody>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const API = location.origin;
+const $ = id => document.getElementById(id);
+
+const num = n => (n ?? 0).toLocaleString();
+const clock = () => new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+
+function dur(a, b) {
+  if (!a) return '—';
+  if (!b) return 'running';
+  const s = Math.max(0, (new Date(b) - new Date(a)) / 1000);
+  if (s < 90) return s.toFixed(0) + 's';
+  if (s < 5400) return (s/60).toFixed(0) + 'm';
+  return (s/3600).toFixed(1) + 'h';
+}
+
+function tiles(status, days) {
+  const week = fillDays(days, 7).reduce((a, d) => a + d.leads, 0);
+  const target = status.target ?? 500;
+  const done = status.delivered_today ?? 0;
+  $('tiles').innerHTML = [
+    [`${num(done)} <span style="font-size:15px;color:var(--muted)">/ ${num(target)}</span>`,
+     'delivered today'],
+    [num(week), 'last 7 days'],
+    [num(status.queue?.discovered), 'companies not yet screened'],
+    [num(status.awaiting_delivery ?? 0), 'analysed, awaiting CRM'],
+  ].map(([n, l]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+}
+
+// The API only returns days that HAVE leads, so a day the pipeline delivered
+// nothing is simply absent. On a page whose job is spotting dead days that is
+// backwards -- fill the window so a zero shows up as a gap you can see.
+function fillDays(days, n) {
+  const have = Object.fromEntries(days.map(d => [d.day, d.leads]));
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10);
+    out.push({day: key, leads: have[key] ?? 0});
+  }
+  return out;
+}
+
+function bars(days) {
+  const rows = fillDays(days, 14);
+  const max = Math.max(1, ...rows.map(r => r.leads));
+  $('bars').innerHTML = rows.map(r => {
+    const h = Math.round((r.leads / max) * 118);
+    const label = new Date(r.day + 'T00:00').toLocaleDateString([], {day:'numeric', month:'short'});
+    return `<div class="bar" title="${label}: ${r.leads} leads">
+      <div class="c">${r.leads || ''}</div>
+      <div class="v" style="height:${h}px"></div>
+      <div class="t">${label}</div></div>`;
+  }).join('');
+}
+
+const ORDER = ['discovered','resolved','blocked','scraped','classified',
+               'contact_done','contact_failed','exported','no_site_found',
+               'not_a_lead','duplicate_domain','resolve_failed','scrape_failed'];
+
+function queue(status) {
+  const q = status.queue || {};
+  const keys = ORDER.filter(k => k in q).concat(Object.keys(q).filter(k => !ORDER.includes(k)));
+  $('queue').innerHTML = keys.map(k =>
+    `<div class="qi"><div class="n">${num(q[k])}</div><div class="l">${k}</div></div>`).join('');
+}
+
+function runs(list) {
+  $('runs').tBodies[0].innerHTML = list.slice(0, 40).map(r => {
+    const bad = r.exit_code !== 0 && r.exit_code !== null;
+    const running = !r.finished_at;
+    const pill = running ? '<span class="pill wait">running</span>'
+      : bad ? `<span class="pill bad">rc ${r.exit_code}</span>`
+            : '<span class="pill ok">ok</span>';
+    const when = new Date(r.started_at).toLocaleString([], {
+      month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+    return `<tr>
+      <td class="m">${when}</td>
+      <td>${r.stage}</td>
+      <td class="m">${dur(r.started_at, r.finished_at)}</td>
+      <td class="m">${num(r.leads_after)}</td>
+      <td>${pill}</td>
+      <td class="note" style="max-width:38ch">${(r.note || '').slice(0, 90)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="note">no runs recorded yet</td></tr>';
+}
+
+async function load() {
+  try {
+    const [status, days, list] = await Promise.all([
+      fetch(`${API}/api/pipeline/status`).then(r => r.json()),
+      fetch(`${API}/api/pipeline/throughput?days=14`).then(r => r.json()),
+      fetch(`${API}/api/pipeline/runs?limit=40`).then(r => r.json()),
+    ]);
+    tiles(status, days); bars(days); queue(status); runs(list);
+    $('refreshed').textContent = 'updated ' + clock();
+  } catch (e) {
+    document.querySelector('main').insertAdjacentHTML('afterbegin',
+      `<div class="panel"><div class="err">could not reach the API: ${e}</div></div>`);
+    $('refreshed').textContent = 'offline';
+  }
+}
+
+$('clock').textContent = clock();
+setInterval(() => $('clock').textContent = clock(), 30000);
+load();
+setInterval(load, 60000);
+</script>

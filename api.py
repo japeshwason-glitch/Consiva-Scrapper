@@ -225,3 +225,8 @@ if UI_DIR.exists():
     @app.get("/", include_in_schema=False)
     def index():
         return FileResponse(UI_DIR / "index.html")
+
+    @app.get("/ops", include_in_schema=False)
+    def ops():
+        """Daily activity: throughput, queue depth and the stage run log."""
+        return FileResponse(UI_DIR / "ops.html")

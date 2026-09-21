@@ -155,3 +155,19 @@ To confirm the scheduler is actually current after a build:
       || docker compose exec scheduler python -c "import config; print(config.CRM_LEADS_DB_NAME)"
 
 An AttributeError there means the image predates that setting.
+
+## The model's systemd unit is called gemma4-llama
+
+Not `llama-server`, despite `deploy/llama-server.service` in this repo being
+the reference copy. On the GB10 it is:
+
+    systemctl status gemma4-llama
+    journalctl -u gemma4-llama -n 50
+
+Checking the wrong name reports `inactive` and sends you hunting for a dead
+model that is in fact running. Confirm with the endpoint instead, which does
+not care what the unit is called:
+
+    curl -s localhost:8080/health
+    docker compose exec scheduler python -c "
+    import llm; print(llm.match_score('TATA MOTORS LIMITED','Tata Motors','Indian carmaker.'))"

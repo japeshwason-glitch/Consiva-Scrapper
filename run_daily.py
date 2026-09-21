@@ -76,6 +76,10 @@ EXCLUDE_INDUSTRY = (
 # a night can absorb several.
 INFRA_BACKOFF = 300
 
+# Lines of each stage's output to echo. Raised from 3 after a fault took days
+# to find because the lines naming it were never printed.
+LOG_TAIL_LINES = int(os.environ.get("LOG_TAIL_LINES", "8"))
+
 # A run has to end before the next window opens, or the schedule drifts and
 # two days' work starts stacking up. With a 06:30 start the window is a full
 # 24h, so the default stops at 05:30 -- an hour clear of the next start.
@@ -153,9 +157,18 @@ def run(stage, args, dry_run=False):
     started = time.strftime("%Y-%m-%d %H:%M:%S")
     print(f"   -> {Path(cmd[4]).name} {' '.join(args)}", flush=True)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
-    tail = (proc.stdout or "").strip().splitlines()
-    for line in tail[-3:]:
-        print(f"      {line}", flush=True)
+    out = (proc.stdout or "").strip().splitlines()
+    # The summary, plus anything that explains an unproductive run. Three lines
+    # was too few: when every state reported "resolved 0 ... no site found 0 of
+    # 66" the per-company verdicts that said why were all above the cut, and the
+    # cause had to be reconstructed from counters days later.
+    NOTABLE = ("ABORTING", "STOPPING", "NOTE:", "Traceback", "wall ", "dns? ",
+               "parked at", "marked '")
+    flagged = [l for l in out if any(k in l for k in NOTABLE)]
+    tail = out[-LOG_TAIL_LINES:]
+    for line in out:
+        if line in tail or (line in flagged and flagged.index(line) < 6):
+            print(f"      {line}", flush=True)
     if proc.returncode != 0:
         print(f"      FAILED rc={proc.returncode}: {(proc.stderr or '')[-300:]}", flush=True)
     log_run(Path(cmd[4]).stem, started, proc.returncode, None,

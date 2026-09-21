@@ -193,6 +193,12 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
                 infra_down = True
                 break
 
+    # Work the bot-wall backlog with a browser. Capped, because a browser page
+    # load costs roughly ten times an HTTP fetch and this must not crowd out
+    # screening -- the backlog is a side channel, not the main road.
+    if pending("blocked") or dry_run:
+        run("02_resolve_domain.py", ["--from-blocked", "--limit", "40"], dry_run)
+
     if pending("resolved") or dry_run:
         run("03_scrape_playwright.py",
             ["--limit", "500", "--concurrency", str(SCRAPE_CONCURRENCY)], dry_run)

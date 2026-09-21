@@ -137,6 +137,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit", type=int, default=50)
     ap.add_argument("--dry-run", action="store_true", help="probe but write nothing")
+    ap.add_argument("--from-blocked", action="store_true",
+                    help="work the 'blocked' backlog instead of new companies: "
+                         "the ones a bot wall stopped us reading. Always uses a "
+                         "real browser, and only re-probes the hosts that were "
+                         "blocked rather than regenerating every candidate.")
     ap.add_argument("--sample", action="store_true",
                     help="draw a random spread across the whole corpus instead "
                          "of working through it in ingest order. Use this to "
@@ -150,21 +155,22 @@ def main():
                     help="skip the browser pass over bot-walled hosts")
     args = ap.parse_args()
 
-    companies = db.get_pending("discovered", limit=args.limit,
+    source = "blocked" if args.from_blocked else "discovered"
+    companies = db.get_pending(source, limit=args.limit,
                                extra_where=args.where,
                                order="random()" if args.sample else None)
     if not companies:
         print("nothing at status='discovered'")
         return
-    print(f"resolving {len(companies)} companies "
+    print(f"resolving {len(companies)} companies from '{source}' "
           f"(accept at match_score >= {resolver.ACCEPT_SCORE})\n")
 
-    resolved = failed = duplicate = done = skipped_dns = no_site = 0
+    resolved = failed = duplicate = done = skipped_dns = no_site = blocked = 0
     claimed = {}
     blocked_companies = []
 
     def record(company, winner, reason, escalated=False):
-        nonlocal resolved, failed, duplicate, skipped_dns, no_site
+        nonlocal resolved, failed, duplicate, skipped_dns, no_site, blocked
         name = company["company_name"][:42]
 
         if winner is None:
@@ -179,6 +185,19 @@ def main():
                          if h.strip()]
                 blocked_companies.append((company, hosts))
                 print(f"  wall  {name:<44} {reason[:64]}", flush=True)
+                if args.no_escalate and not args.dry_run:
+                    # Park it at its own status so it leaves the queue.
+                    #
+                    # get_pending orders by updated_at ASC and a row nobody
+                    # writes keeps its ingest timestamp -- the oldest in the
+                    # table. Leaving a wall untouched therefore returned the
+                    # SAME companies at the head of the queue every cycle, for
+                    # ever. Walls accumulated at the front until they filled
+                    # the whole batch, and the pipeline spent two days
+                    # re-attempting 396 stuck rows and writing nothing.
+                    blocked += 1
+                    db.advance_status(company["cin"], "blocked",
+                                      last_error=reason[:400])
                 return
             if reason.startswith("DNS_UNAVAILABLE:"):
                 # We never got to ask about this company. Charging it a retry
@@ -231,6 +250,32 @@ def main():
                 resolve_evidence=winner["reason"][:500],
                 resolve_verified_by="llm-match-score")
 
+    if args.from_blocked:
+        print(f"browser pass over {len(companies)} parked compan(ies)\n", flush=True)
+        browser_fetch = playwright_fetch_factory()
+        try:
+            for company in companies:
+                hosts = [h.strip() for h in
+                         str(company.get("last_error") or "")[len("BLOCKED:"):]
+                         .split("--")[0].split(",") if h.strip()]
+                loc = location.parse(company.get("registered_address"))
+                try:
+                    winner, reason, _ = resolver.resolve(
+                        company, browser_fetch, loc=loc, only_hosts=hosts or None)
+                except (resolver.DNSUnavailable, resolver.VerifierUnavailable) as exc:
+                    print(f"\nABORTING: {exc}", flush=True)
+                    break
+                except Exception as exc:
+                    winner, reason = None, f"{type(exc).__name__}: {str(exc)[:150]}"
+                record(company, winner, reason, escalated=True)
+        finally:
+            browser_fetch.close()
+        print(f"\nresolved {resolved}, still unreadable {failed}, "
+              f"duplicate {duplicate} of {len(companies)}")
+        if not args.dry_run:
+            print("status counts:", db.count_by_status())
+        return
+
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
         futures = {pool.submit(resolve_one, c, args.verbose): c for c in companies}
         for future in as_completed(futures):
@@ -279,6 +324,10 @@ def main():
 
     print(f"\nresolved {resolved}, duplicate-domain {duplicate}, "
           f"no site found {failed} of {len(companies)}")
+    if blocked:
+        print(f"{blocked} compan(ies) parked at 'blocked' -- a bot wall stopped "
+              f"us reading them. Retry with a browser:\n"
+              f"  python stages/02_resolve_domain.py --from-blocked")
     if no_site:
         print(f"{no_site} compan(ies) marked 'no_site_found' -- no candidate "
               f"hostname exists in DNS. Export them with:\n"

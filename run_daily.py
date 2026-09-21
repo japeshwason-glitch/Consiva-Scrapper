@@ -18,6 +18,7 @@ Built to survive the machine losing power mid-run:
 """
 
 import argparse
+from datetime import datetime
 import os
 import subprocess
 import sys
@@ -154,7 +155,13 @@ def run(stage, args, dry_run=False):
     if dry_run:
         print("   would run:", " ".join(cmd[3:]))
         return 0
-    started = time.strftime("%Y-%m-%d %H:%M:%S")
+    # Timezone-aware, not a naive local string. started_at is timestamptz, and
+    # a naive string is read in the DATABASE's session timezone -- the postgres
+    # container runs UTC while this one runs IST, so an IST wall-clock string
+    # landed 5h30m in the future. finished_at = NOW() was then earlier than the
+    # start, every duration went negative, and the dashboard showed 0s for
+    # everything with start times hours ahead of the actual run.
+    started = datetime.now().astimezone()
     print(f"   -> {Path(cmd[4]).name} {' '.join(args)}", flush=True)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
     out = (proc.stdout or "").strip().splitlines()

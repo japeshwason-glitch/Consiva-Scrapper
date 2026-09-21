@@ -18,6 +18,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: consiva
+      # Same clock as the other containers: NOW() feeds run durations and the
+      # daily lead count, and a mismatch there is invisible until a duration
+      # comes out negative.
+      TZ: ${TZ:-Asia/Kolkata}
     volumes:
       - pgdata:/var/lib/postgresql/data
     # Deliberately NOT published to the host. Everything that needs the

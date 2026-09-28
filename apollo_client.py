@@ -42,6 +42,23 @@ class ApolloBudgetExhausted(RuntimeError):
     """
 
 
+class ApolloRateLimited(RuntimeError):
+    """
+    Still rate-limited after waiting RATE_WAIT_MAX. Like ApolloBudgetExhausted
+    this is "we could not ask", not "this company failed": callers stop the batch and
+    leave the rest untouched instead of charging each company a retry. Sep 24:
+    a 5-minute sleep did not outlast the rolling hourly window, the 429 that
+    followed became ApolloUnavailable, and companies were marked failed for it.
+    """
+
+
+# How long to wait out a 429 before giving up, and the slice to wait in. The
+# cap outlasts a full rolling hourly window, so in practice only something
+# unexpected -- a second process draining the same key -- reaches it.
+RATE_WAIT_STEP = 300
+RATE_WAIT_MAX = 75 * 60
+
+
 # Apollo publishes its own limits on every response. The free plan is
 # 50/minute, 200/hour, 600/24h, measured live. Rather than hard-coding those,
 # read them back and pace against whatever the account actually has.
@@ -128,14 +145,19 @@ def _pace():
         raise ApolloBudgetExhausted(
             f"every configured Apollo key ({len(_keys())}) has spent its "
             f"24-hour allowance; remaining companies left for the next run")
+    if hour is not None and hour <= 1:
+        # The hourly window is rolling, so its reset time is unknown. Wait a
+        # slice, then forget the stale count so the next call finds out --
+        # a 429 there is handled by _post, which keeps waiting up to a cap.
+        logging.warning("apollo: hourly allowance spent, waiting 5 min")
+        time.sleep(RATE_WAIT_STEP)
+        seen["x-hourly-requests-left"] = None
     if minute is not None and minute <= 1:
         logging.info("apollo: minute allowance spent, waiting 60s")
         time.sleep(60)
-        _left["x-minute-requests-left"] = 50
-    elif hour is not None and hour <= 1:
-        logging.warning("apollo: hourly allowance spent, waiting 5 min")
-        time.sleep(300)
-        _left["x-hourly-requests-left"] = 50
+        # Written to this key's slot -- the old code wrote a top-level key
+        # that _pace never reads, so the stale value tripped every call.
+        seen["x-minute-requests-left"] = 50
 
 
 def _post(url, payload):
@@ -155,21 +177,38 @@ def _post(url, payload):
         _note_limits({k.lower(): v for k, v in exc.headers.items()})
         body = exc.read().decode("utf-8", "replace")[:300]
         if exc.code == 429:
-            # Paced wrong, or another process shares the key. Wait out the
-            # minute window once and retry rather than burning the company.
-            if _left.get(current_key(), {}).get("x-24-hour-requests-left", 1) <= 0:
+            # A 429 is never about the company. Every path out of here is
+            # BudgetExhausted or RateLimited, both of which leave it untouched.
+            seen = _left.get(current_key(), {})
+            if seen.get("x-24-hour-requests-left", 1) <= 0:
                 _spent.add(current_key())
                 if not _rotate():
                     raise ApolloBudgetExhausted(body) from exc
-            logging.warning("apollo: 429, waiting 60s and retrying once")
-            time.sleep(60)
-            try:
-                with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-                    _note_limits({k.lower(): v for k, v in r.headers.items()})
-                    return json.load(r)
-            except urllib.error.HTTPError as exc2:
-                body2 = exc2.read().decode("utf-8", "replace")[:300]
-                raise ApolloUnavailable(f"HTTP {exc2.code}: {body2}") from exc2
+                return _post(url, payload)
+            # Minute or hourly window, or another process sharing the key.
+            # Keep waiting in slices rather than failing the company; give up
+            # only after RATE_WAIT_MAX, which outlasts a full hourly window.
+            waited = 0
+            while True:
+                step = 60 if waited == 0 else RATE_WAIT_STEP
+                if waited + step > RATE_WAIT_MAX:
+                    raise ApolloRateLimited(
+                        f"still rate-limited after {waited // 60} min: {body}") from exc
+                logging.warning("apollo: 429, waiting %ds and retrying", step)
+                time.sleep(step)
+                waited += step
+                try:
+                    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                        _note_limits({k.lower(): v for k, v in r.headers.items()})
+                        return json.load(r)
+                except urllib.error.HTTPError as exc2:
+                    _note_limits({k.lower(): v for k, v in exc2.headers.items()})
+                    body = exc2.read().decode("utf-8", "replace")[:300]
+                    if exc2.code != 429:
+                        raise ApolloUnavailable(f"HTTP {exc2.code}: {body}") from exc2
+                    if seen.get("x-24-hour-requests-left", 1) <= 0:
+                        _spent.add(current_key())
+                        raise ApolloBudgetExhausted(body) from exc2
         raise ApolloUnavailable(f"HTTP {exc.code}: {body}") from exc
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
         raise ApolloUnavailable(str(exc)) from exc

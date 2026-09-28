@@ -238,8 +238,9 @@ def main():
         name = company["company_name"][:36]
         try:
             people, total = apollo_client.search_people(domain)
-        except apollo_client.ApolloBudgetExhausted as exc:
-            # The day's allowance is gone. Every company still in the list is
+        except (apollo_client.ApolloBudgetExhausted,
+                apollo_client.ApolloRateLimited) as exc:
+            # The day's (or the hour's) allowance is gone. Every company still in the list is
             # untouched at 'classified' and carries no retry charge, so the
             # next run picks up exactly here. Marking them failed would spend
             # their retries on our quota rather than on anything about them.
@@ -306,5 +307,5 @@ def main():
 
 if __name__ == "__main__":
     # 75 = EX_TEMPFAIL: nothing wrong with the data, the allowance is
-    # spent. run_daily reads this and stops calling us until tomorrow.
+    # spent. run_daily reads this and leaves us alone for CONTACT_RETRY.
     sys.exit(75 if main() else 0)

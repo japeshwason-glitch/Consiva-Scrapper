@@ -77,6 +77,13 @@ EXCLUDE_INDUSTRY = (
 # a night can absorb several.
 INFRA_BACKOFF = 300
 
+# How long to leave stage 06 alone after Apollo reports its allowance spent.
+# The allowance is a rolling 24h window, not a calendar day, so it comes back
+# while a run is still going. This used to latch off for the whole run: once
+# spent at 12:40 on Sep 23 contacts were never retried, the run went on past
+# midnight, and Sep 24 delivered nothing. A retry costs one refused request.
+CONTACT_RETRY = int(os.environ.get("CONTACT_RETRY_SECONDS", "3600"))
+
 # Lines of each stage's output to echo. Raised from 3 after a fault took days
 # to find because the lines naming it were never printed.
 LOG_TAIL_LINES = int(os.environ.get("LOG_TAIL_LINES", "8"))
@@ -187,9 +194,9 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
     """
     One pass through the pipeline. Each stage feeds the next.
 
-    Returns True if contact enrichment reported its daily allowance spent, so
-    the caller can skip it for the rest of the day instead of paying its
-    rate-limit waits on every cycle for nothing.
+    Returns True if contact enrichment reported its allowance spent, so the
+    caller can skip it for CONTACT_RETRY instead of paying its rate-limit
+    waits on every cycle for nothing.
     """
     budget_spent = False
     infra_down = False
@@ -230,15 +237,20 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
         rc = run("06_enrich_contact_apollo.py", ["--limit", "500"], dry_run)
         if rc == 75:
             budget_spent = True
-            print("   contact allowance spent for the day; "
+            print("   contact allowance spent; retrying in "
+                  f"{CONTACT_RETRY // 60} min, "
                   "leads still export without a name", flush=True)
     # Stage 07 exports contact_done AND contact_failed -- a company with a
     # consent gap is a lead whether or not Apollo had a person for it, and
     # Apollo returns nothing for most small Indian firms. Gating on
     # contact_done alone means a cycle where every lookup misses exports
     # nothing at all, which is the same bug stage 07 itself was fixed for.
+    # 'classified' is here for the same reason stage 07 itself selects it: when
+    # the allowance is spent, companies stay at 'classified', and gating on
+    # stage 06's two outcomes alone meant stage 07 never ran for them.
     gap = f"has_cmp = false AND {fingerprints.LEAD_SQL}"
-    if pending("contact_done", gap) or pending("contact_failed", gap) or dry_run:
+    if pending("contact_done", gap) or pending("contact_failed", gap) \
+            or pending("classified", gap) or dry_run:
         run("07_export_crm.py", [], dry_run)
     if pending("exported", "delivered_at IS NULL") or dry_run:
         run("crm_push.py", ["--limit", "500"], dry_run)
@@ -271,7 +283,7 @@ def main():
     print(f"{done} leads and {scraped_today()} scrapes already done today "
           f"({'resuming' if done or scraped_today() else 'starting fresh'})\n")
 
-    skip_contacts = False
+    contacts_spent_at = None
     stalled = 0
     deadline = time.monotonic() + MAX_RUN_HOURS * 3600
     for i in range(1, args.max_cycles + 1):
@@ -293,8 +305,13 @@ def main():
               f"{scraped} scraped today)", flush=True)
 
         before = (done, scraped, queue_signature())
+        skip_contacts = (contacts_spent_at is not None
+                         and time.monotonic() - contacts_spent_at < CONTACT_RETRY)
         budget_spent, infra_down = cycle(args.dry_run, args.workers, skip_contacts)
-        skip_contacts = skip_contacts or budget_spent
+        if budget_spent:
+            contacts_spent_at = time.monotonic()
+        elif not skip_contacts:
+            contacts_spent_at = None
         if infra_down:
             # Wait for the thing to come back rather than spending cycles
             # discovering it is still down. Nine cycles are needed out of

@@ -47,8 +47,24 @@ def next_run(now):
     return today if today > now else today + timedelta(days=1)
 
 
+# A run must finish this long before the next window opens. run_daily's own
+# 23h cap only fits a run that starts AT the window: a catch-up after a reboot
+# at 18:37 ran to 17:37 the next day and swallowed that morning's 06:30 run
+# (Sep 27 -> 28, and the same on Sep 23 -> 24).
+WINDOW_MARGIN_H = 1.0
+# Not worth starting a catch-up that would have less than this to work with.
+MIN_RUN_H = 2.0
+
+
+def hours_until_next_window(now=None):
+    now = now or datetime.now()
+    return (next_run(now) - now).total_seconds() / 3600
+
+
 def run_once():
     here = os.path.dirname(os.path.abspath(__file__))
+    budget_h = hours_until_next_window() - WINDOW_MARGIN_H
+    env = dict(os.environ, MAX_RUN_HOURS=f"{min(budget_h, 23):.2f}")
 
     if RUN_INBOUND:
         print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] inbound leads "
@@ -64,9 +80,11 @@ def run_once():
 
     print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] starting daily run "
           f"(target {TARGET} leads, no scrape cap)", flush=True)
+    print(f"  must finish by the next window: {min(budget_h, 23):.1f}h budget",
+          flush=True)
     result = subprocess.run(
         [sys.executable, "-u", "run_daily.py",
-         "--target", str(TARGET)], cwd=here)
+         "--target", str(TARGET)], cwd=here, env=env)
     print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] run finished rc={result.returncode}, "
           f"{leads_today()} leads delivered today", flush=True)
 
@@ -82,9 +100,14 @@ def main():
     hour, minute = (int(x) for x in RUN_AT.split(":"))
     window_passed = now > now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if window_passed and leads_today() < TARGET:
-        print("today's window already passed and the target is not met — "
-              "running now (catch-up)", flush=True)
-        run_once()
+        left = hours_until_next_window(now) - WINDOW_MARGIN_H
+        if left >= MIN_RUN_H:
+            print("today's window already passed and the target is not met — "
+                  f"running now (catch-up, {left:.1f}h until it must stop)", flush=True)
+            run_once()
+        else:
+            print(f"today's window passed, but only {left:.1f}h remain before the "
+                  f"next one -- skipping the catch-up", flush=True)
 
     while True:
         upcoming = next_run(datetime.now())

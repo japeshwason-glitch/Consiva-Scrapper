@@ -81,7 +81,10 @@ def main():
     # never reach the CRM, and never count toward the daily target -- while
     # still showing as pending work, so run_daily keeps cycling and delivers
     # nothing. Contact enrichment is additive, never a gate.
-    gap = f"has_cmp = false AND {fingerprints.LEAD_SQL}"
+    #
+    # LLPs are never exported (db.LLP_SQL). They are screened out before
+    # stage 02 and parked by exclude_llp.py; this is the last guard.
+    gap = f"has_cmp = false AND {fingerprints.LEAD_SQL} AND NOT ({db.LLP_SQL})"
     companies = []
     for status in ("contact_done", "contact_failed", "classified"):
         companies += db.get_pending(status, limit=args.limit, extra_where=gap)

@@ -50,6 +50,7 @@ exactly where it stopped.
 | `resolve_failed` | stage 02 | No domain after `MAX_RETRIES`. Terminal. |
 | `scraped` | stage 03 | Page loaded, no CMP found -- a live lead. |
 | `not_a_lead` | stage 03 | CMP detected (`has_cmp = true`). Terminal. |
+| `excluded` | `exclude_llp.py` | Ruled out by policy, not by the gap check -- LLPs (`db.LLP_SQL`), reason in `last_error`. Terminal. |
 | `scrape_failed` | stage 03 | Page never loaded after `MAX_RETRIES`. Terminal. |
 | `linkedin_done` | stage 04 | LinkedIn company data written back. |
 | `linkedin_failed` | stage 04 | No LinkedIn match after `MAX_RETRIES`. Terminal. |

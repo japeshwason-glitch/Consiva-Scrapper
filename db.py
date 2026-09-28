@@ -29,6 +29,13 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 MAX_RETRIES = 3  # after this many failures on a stage, a row moves to a *_failed status
 
+# LLPs are not sent to the CRM (decided Sep 24): MCA carries no paid-up capital
+# for them, so stage 05 cannot size them -- every LLP exported to that date was
+# business_scale 'Unknown' -- and Apollo rarely has a usable person. MCA gives
+# an LLP an LLPIN ("AAA-1234") in place of a CIN, which catches the ones whose
+# name does not end in "LLP" too.
+LLP_SQL = "cin ~ '^[A-Z]{3}-[0-9]{4}$'"
+
 MIN_POOL_CONNECTIONS = 1
 MAX_POOL_CONNECTIONS = 10
 
@@ -217,6 +224,15 @@ def mark_not_a_lead(cin, reason="already has a CMP"):
     machine itself, not in application logic scattered across scripts.
     """
     advance_status(cin, "not_a_lead", last_error=reason)
+
+
+def mark_excluded(cin, reason):
+    """
+    Terminal state for companies ruled out by policy rather than by the
+    consent-gap check -- kept apart from 'not_a_lead', which every report reads
+    as "already has a CMP".
+    """
+    advance_status(cin, "excluded", last_error=reason)
 
 
 # Column order used by the stage-01 bulk insert. Everything else on the row

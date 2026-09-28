@@ -68,9 +68,12 @@ SCREEN_BATCH = 400
 # Excluded at screening rather than at export, so we never spend a resolve, a
 # page load or a model call on them. 373,308 of 1,444,890 -- 25.8% of the
 # corpus never gets touched.
-EXCLUDE_INDUSTRY = (
+#
+# LLPs are screened out here for the same reason -- see db.LLP_SQL.
+SCREEN_OUT = (
     "industrial_classification NOT LIKE 'Manufacturing%' AND "
-    "industrial_classification NOT LIKE 'Construction%'"
+    "industrial_classification NOT LIKE 'Construction%' AND "
+    f"NOT ({db.LLP_SQL})"
 )
 # How long to wait when DNS or the identity model is unreachable. Both restart
 # on their own; this is long enough to cover a model reload, short enough that
@@ -204,12 +207,12 @@ def cycle(dry_run, workers=WORKERS, skip_contacts=False):
     if pending("discovered") > 0:
         for state in STATE_ORDER:
             if pending("discovered",
-                       f"state_code='{state}' AND {EXCLUDE_INDUSTRY}") == 0:
+                       f"state_code='{state}' AND {SCREEN_OUT}") == 0:
                 continue
             rc = run("02_resolve_domain.py",
                      ["--limit", str(SCREEN_BATCH // len(STATE_ORDER)),
                       "--no-escalate", "--workers", str(workers),
-                      "--where", f"state_code='{state}' AND {EXCLUDE_INDUSTRY}"],
+                      "--where", f"state_code='{state}' AND {SCREEN_OUT}"],
                      dry_run)
             if rc == 75:
                 # DNS or the identity model is down. Both self-heal -- the

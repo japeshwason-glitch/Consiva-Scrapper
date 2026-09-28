@@ -20,7 +20,10 @@ stage 03, so we never compute a consent gap for a company we do not have.
 
 import argparse
 import re
+import socket
 import sys
+import threading
+import time
 import warnings
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -125,6 +128,31 @@ def playwright_fetch_factory():
     return fetch_via_browser
 
 
+# Hosts that always resolve. Checked before charging a DNS failure to a
+# company, so a resolver that is flaking -- rather than fully down, which the
+# resolver's own streak check already catches -- never spends anyone's retries.
+KNOWN_GOOD_HOSTS = ("google.com", "cloudflare.com")
+_HEALTH = {"at": 0.0, "ok": False}
+_HEALTH_LOCK = threading.Lock()
+
+
+def resolver_healthy():
+    """True if a known-good name resolves right now. Cached for 60s."""
+    with _HEALTH_LOCK:
+        if time.monotonic() - _HEALTH["at"] < 60:
+            return _HEALTH["ok"]
+        ok = False
+        for host in KNOWN_GOOD_HOSTS:
+            try:
+                socket.getaddrinfo(host, None)
+                ok = True
+                break
+            except OSError:
+                pass
+        _HEALTH.update(at=time.monotonic(), ok=ok)
+        return ok
+
+
 def resolve_one(company, verbose=False):
     loc = location.parse(company.get("registered_address"))
     logger = (lambda line: print(line, flush=True)) if verbose else None
@@ -166,11 +194,13 @@ def main():
           f"(accept at match_score >= {resolver.ACCEPT_SCORE})\n")
 
     resolved = failed = duplicate = done = skipped_dns = no_site = blocked = 0
+    skipped_uncharged = 0
     claimed = {}
     blocked_companies = []
 
     def record(company, winner, reason, escalated=False):
         nonlocal resolved, failed, duplicate, skipped_dns, no_site, blocked
+        nonlocal skipped_uncharged
         name = company["company_name"][:42]
 
         if winner is None:
@@ -200,11 +230,28 @@ def main():
                                       last_error=reason[:400])
                 return
             if reason.startswith("DNS_UNAVAILABLE:"):
-                # We never got to ask about this company. Charging it a retry
-                # would spend its three lives on our own broken resolver, and
-                # during an outage that happens to every company at once.
+                # Every candidate answered SERVFAIL / timed out. Two very
+                # different causes:
+                #   * our resolver is down -- then nobody's lookups work, the
+                #     resolver's streak check aborts the batch (rc 75) before
+                #     we get here, and resolver_healthy() catches a flaky one.
+                #     Charging a retry would spend everyone's lives on us.
+                #   * the domain's own DNS is broken (lame delegation, expired
+                #     zone) -- zakota.com, wimera.com SERVFAIL on 1.1.1.1 and
+                #     8.8.8.8 too. That is permanent.
+                # This used to treat both as the first and leave the row
+                # untouched. get_pending returns oldest updated_at first, so
+                # the same broken-DNS companies came back every cycle: 31
+                # times each in one run, 43 of every 66 slots by Sep 28, and
+                # the pipeline delivered 2-6 leads a day. With DNS healthy, it
+                # now costs a retry like any failure; three and it is
+                # resolve_failed and out of the queue.
                 skipped_dns += 1
                 print(f"  dns?  {name:<44} {reason[:64]}", flush=True)
+                if not args.dry_run and resolver_healthy():
+                    db.mark_failed(company["cin"], "resolve", reason[:400])
+                else:
+                    skipped_uncharged += 1
                 return
             failed += 1
             print(f"  none  {name:<44} {reason[:64]}", flush=True)
@@ -333,8 +380,10 @@ def main():
               f"hostname exists in DNS. Export them with:\n"
               f"  python export_no_site.py")
     if skipped_dns:
-        print(f"NOTE: {skipped_dns} compan(ies) skipped -- their lookups could not "
-              f"be completed. Left at 'discovered' with no retry charged.")
+        charged = skipped_dns - skipped_uncharged
+        print(f"NOTE: {skipped_dns} compan(ies) had no answerable DNS for any "
+              f"candidate. {charged} charged a retry (resolver healthy -- the "
+              f"domain's DNS is broken); {skipped_uncharged} left untouched.")
     if args.dry_run:
         print("dry run -- nothing written")
     else:

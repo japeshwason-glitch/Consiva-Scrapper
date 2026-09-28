@@ -100,6 +100,23 @@ EXTRACT_JS = """
 
 
 
+# Runs in the page: the markup inside every shadow root, which page.content()
+# does not serialise. WPConsent moves its whole banner into one on load
+# (div#wpconsent-container), so a page whose raw HTML says "We use cookies"
+# read as having no banner at all. Any vendor rendering that way hid the same.
+SHADOW_JS = r"""
+() => {
+  const out = [];
+  const walk = root => {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.shadowRoot) { out.push(el.shadowRoot.innerHTML); walk(el.shadowRoot); }
+    }
+  };
+  walk(document);
+  return out.join('\n');
+}
+"""
+
 # Runs in the page: describes every form well enough to classify what personal
 # data it collects, and whether the visitor is told anything before giving it.
 FORM_JS = r"""
@@ -285,12 +302,13 @@ async def scrape_one(browser, company, use_llm):
             "() => Array.from(document.querySelectorAll('script[src]')).map(s => s.src)"
         )
         forms = await page.evaluate(FORM_JS)
+        shadow_html = await page.evaluate(SHADOW_JS)
         # Contact pages carry the real enquiry form far more often than the
         # homepage does, so their forms are merged in below.
         cookies = await context.cookies()
         await page.close()
 
-        blob = "\n".join([html, " ".join(scripts)])
+        blob = "\n".join([html, shadow_html, " ".join(scripts)])
         main_text = clean_text(data.get("main"))
         footer_text = clean_text(data.get("footer"), 1200)
 

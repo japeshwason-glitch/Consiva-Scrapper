@@ -36,6 +36,9 @@ CMP_SIGNATURES = (
     # WordPress consent plugins -- very common on Indian SME sites.
     ("GDPR Cookie Consent (WP)", ("cookie-law-info", "cli-modal", "cli_settings")),
     ("Moove GDPR (WP)",   ("moove_gdpr", "gdpr-cookie-compliance")),
+    # Blocks tagged scripts (type="text/plain" data-wpconsent-category) until
+    # the visitor opts in -- a real CMP, not a notice. Missed until Sep 24.
+    ("WPConsent (WP)",    ("wpconsent",)),
 )
 
 # --- Generic cookie-banner presence (no recognised CMP vendor) ---------------

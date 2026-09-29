@@ -67,6 +67,9 @@ services:
              --workers ${API_WORKERS:-4} --proxy-headers"
     ports:
       - "8012:8012"
+    # Read-only: /partner shows whether data/partner.pause is set.
+    volumes:
+      - ./data:/app/data:ro
     depends_on:
       migrate:
         condition: service_completed_successfully

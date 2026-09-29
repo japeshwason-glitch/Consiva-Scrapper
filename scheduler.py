@@ -32,6 +32,21 @@ RUN_INBOUND = os.environ.get("RUN_INBOUND", "1") not in ("0", "false", "False", 
 # skipped, so the window self-heals a night that was missed entirely.
 INBOUND_DAYS = int(os.environ.get("INBOUND_DAYS", "2"))
 
+# Partner-imported rows (dbo.CRM_Scrapper, Source='PartnerImport') run AFTER
+# the MCA run, never before it: the MCA run is the target-bearing job and gets
+# first claim on the day, and it has been finishing in ~3h, leaving the rest of
+# the day idle. The partner job carries its own daily quota
+# (PARTNER_DAILY_TARGET, default 500) counted from the rows themselves, so
+# calling it again after a restart only does what today still owes.
+RUN_PARTNER = os.environ.get("RUN_PARTNER", "1") not in ("0", "false", "False", "")
+# Not worth starting the partner job with less time than this before it must stop.
+MIN_PARTNER_H = 0.25
+# A fixed daily start for the partner job, "HH:MM". It still never overlaps
+# the MCA run: this loop is busy while run_daily.py runs, so a partner time
+# that falls inside the MCA run starts the moment the MCA run returns. Unset,
+# the partner job simply follows the MCA run.
+PARTNER_RUN_AT = os.environ.get("PARTNER_RUN_AT", "").strip()
+
 
 
 def leads_today():
@@ -41,10 +56,24 @@ def leads_today():
         return cur.fetchone()["n"]
 
 
-def next_run(now):
-    hour, minute = (int(x) for x in RUN_AT.split(":"))
-    today = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+def at_today(hhmm, now):
+    hour, minute = (int(x) for x in hhmm.split(":"))
+    return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+def next_at(hhmm, now):
+    today = at_today(hhmm, now)
     return today if today > now else today + timedelta(days=1)
+
+
+def next_run(now):
+    return next_at(RUN_AT, now)
+
+
+def partner_due(now=None):
+    """Whether the partner job may start now. The job itself owns the quota."""
+    now = now or datetime.now()
+    return not PARTNER_RUN_AT or now >= at_today(PARTNER_RUN_AT, now)
 
 
 # A run must finish this long before the next window opens. run_daily's own
@@ -59,6 +88,26 @@ MIN_RUN_H = 2.0
 def hours_until_next_window(now=None):
     now = now or datetime.now()
     return (next_run(now) - now).total_seconds() / 3600
+
+
+def run_partner():
+    """The partner-import batch, bounded to end before the next window."""
+    if not RUN_PARTNER or not partner_due():
+        return
+    budget_h = hours_until_next_window() - WINDOW_MARGIN_H
+    if budget_h < MIN_PARTNER_H:
+        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] partner import skipped: "
+              f"only {budget_h:.1f}h before the next window", flush=True)
+        return
+    print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] partner import "
+          f"({budget_h:.1f}h budget)", flush=True)
+    here = os.path.dirname(os.path.abspath(__file__))
+    rc = subprocess.run(
+        [sys.executable, "-u", "partner_import_analyse.py",
+         "--max-minutes", f"{budget_h * 60:.0f}"], cwd=here).returncode
+    if rc != 0:
+        print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] partner import failed "
+              f"rc={rc}", flush=True)
 
 
 def run_once():
@@ -87,12 +136,14 @@ def run_once():
          "--target", str(TARGET)], cwd=here, env=env)
     print(f"[{datetime.now():%Y-%m-%d %H:%M:%S}] run finished rc={result.returncode}, "
           f"{leads_today()} leads delivered today", flush=True)
+    run_partner()
 
 
 def main():
     print(f"scheduler up — daily at {RUN_AT}, target {TARGET} leads"
           + (f", inbound first over {INBOUND_DAYS} days" if RUN_INBOUND
-             else ", inbound disabled"), flush=True)
+             else ", inbound disabled")
+          + ((f", partner import at {PARTNER_RUN_AT}" if PARTNER_RUN_AT else ", partner import after") if RUN_PARTNER else ""), flush=True)
 
     # Catch-up on boot: if today's window has passed and the target is not met,
     # the machine was probably off for it.
@@ -108,17 +159,28 @@ def main():
         else:
             print(f"today's window passed, but only {left:.1f}h remain before the "
                   f"next one -- skipping the catch-up", flush=True)
+    elif window_passed:
+        # MCA already met its target today; the partner job may still owe work.
+        run_partner()
 
     while True:
-        upcoming = next_run(datetime.now())
-        sleep_for = (upcoming - datetime.now()).total_seconds()
-        print(f"next run {upcoming:%Y-%m-%d %H:%M} "
+        now = datetime.now()
+        upcoming = next_run(now)
+        wake = upcoming
+        if RUN_PARTNER and PARTNER_RUN_AT:
+            wake = min(upcoming, next_at(PARTNER_RUN_AT, now))
+        sleep_for = (wake - datetime.now()).total_seconds()
+        what = "run" if wake == upcoming else "partner import"
+        print(f"next {what} {wake:%Y-%m-%d %H:%M} "
               f"(in {sleep_for/3600:.1f}h)", flush=True)
         # Wake hourly rather than sleeping the whole gap, so a clock change or a
         # long suspend cannot leave this parked for a day.
-        while datetime.now() < upcoming:
-            time.sleep(min(3600, max(30, (upcoming - datetime.now()).total_seconds())))
-        run_once()
+        while datetime.now() < wake:
+            time.sleep(min(3600, max(30, (wake - datetime.now()).total_seconds())))
+        if wake == upcoming:
+            run_once()
+        else:
+            run_partner()
 
 
 if __name__ == "__main__":

@@ -1,0 +1,289 @@
+<title>Partner Import</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+:root{
+  --bg:#F4F6F5; --panel:#FFFFFF; --ink:#161B1A; --muted:#65706D;
+  --line:#DDE3E1; --line-soft:#EAEFED;
+  --accent:#1F6F5C; --accent-soft:#E4F0EC;
+  --crit:#B3402F; --warn:#B07A16; --ok:#2E7D5B; --chip:#EFF3F1;
+  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
+  --sans:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#101413; --panel:#171D1B; --ink:#E8EDEB; --muted:#93A09C;
+    --line:#26302D; --line-soft:#1E2725; --accent:#57B396; --accent-soft:#1B2E28;
+    --crit:#E2705C; --warn:#D9A441; --ok:#57B396; --chip:#1E2725;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#101413; --panel:#171D1B; --ink:#E8EDEB; --muted:#93A09C;
+  --line:#26302D; --line-soft:#1E2725; --accent:#57B396; --accent-soft:#1B2E28;
+  --crit:#E2705C; --warn:#D9A441; --ok:#57B396; --chip:#1E2725;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+     font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+header{display:flex;align-items:baseline;gap:14px;padding:14px 20px;
+       border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+.brand{font-weight:700;letter-spacing:-.01em;font-size:15px}
+.brand span{color:var(--muted);font-weight:400;margin-left:8px;font-size:13px}
+header .right{margin-left:auto;display:flex;gap:14px;align-items:center;
+              font-family:var(--mono);font-size:12px;color:var(--muted)}
+main{padding:20px;max-width:1180px;margin:0 auto;display:grid;gap:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.panel h2{margin:0;padding:12px 16px;font-size:12px;letter-spacing:.09em;
+          text-transform:uppercase;color:var(--muted);font-weight:600;
+          border-bottom:1px solid var(--line-soft)}
+.panel .body{padding:16px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1px;
+       background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.tile{background:var(--panel);padding:14px 16px}
+.tile .n{font-size:28px;font-weight:700;letter-spacing:-.02em;
+         font-variant-numeric:tabular-nums;line-height:1.1}
+.tile .l{font-size:11.5px;color:var(--muted);margin-top:3px}
+.bars{display:flex;align-items:flex-end;gap:6px;height:150px;padding-top:6px}
+.bar{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+     align-items:center;gap:5px;min-width:0}
+.bar .v{width:100%;background:var(--accent);border-radius:3px 3px 0 0;min-height:2px}
+.bar .t{font-family:var(--mono);font-size:10px;color:var(--muted);
+        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.bar .c{font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+   color:var(--muted);font-weight:600;padding:0 12px 8px 0;border-bottom:1px solid var(--line)}
+td{padding:7px 12px 7px 0;border-bottom:1px solid var(--line-soft);vertical-align:top}
+td.m,th.m{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.pill{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:1px 7px;
+      border-radius:3px;white-space:nowrap}
+.ok{background:var(--accent-soft);color:var(--ok)}
+.bad{background:color-mix(in srgb,var(--crit) 16%,transparent);color:var(--crit)}
+.wait{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+.q{display:flex;flex-wrap:wrap;gap:8px}
+.qi{background:var(--chip);border-radius:5px;padding:8px 12px;min-width:112px}
+.qi .n{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums}
+.qi .l{font-size:11px;color:var(--muted)}
+.note{color:var(--muted);font-size:12px;max-width:74ch}
+.scroll{overflow-x:auto}
+.err{padding:16px;color:var(--crit);font-family:var(--mono);font-size:12.5px}
+@media (max-width:640px){ main{padding:12px} .bars{height:110px} }
+</style>
+<style>
+header a{color:var(--muted);font-size:12.5px;text-decoration:none}
+header a:hover{color:var(--ink)}
+.state{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px}
+.state b{font-weight:600}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;background:var(--muted)}
+.dot.on{background:var(--ok);box-shadow:0 0 0 3px var(--accent-soft)}
+.dot.paused{background:var(--warn)}
+.split{display:flex;height:14px;border-radius:3px;overflow:hidden;background:var(--chip)}
+.split div{height:100%}
+.legend{display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:12.5px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.legend .n{font-family:var(--mono);font-variant-numeric:tabular-nums;margin-left:4px}
+.tools{display:flex;gap:8px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line-soft)}
+.tools input,.tools select{font:inherit;font-size:13px;padding:5px 9px;border:1px solid var(--line);
+  border-radius:4px;background:var(--panel);color:var(--ink)}
+.tools input{flex:1;min-width:160px}
+.body.tbl{padding:4px 16px 12px}
+td.find{max-width:46ch;color:var(--muted);font-size:12px}
+.score{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.sev{color:var(--crit)} .mid{color:var(--warn)} .cln{color:var(--muted)}
+</style>
+
+<header>
+  <div class="brand">Partner import <span>PartnerImport rows in the CRM table</span></div>
+  <a href="/ops">pipeline activity</a>
+  <div class="right">
+    <span id="clock">—</span>
+    <span id="refreshed">loading…</span>
+  </div>
+</header>
+
+<main>
+  <div class="panel"><div class="state" id="state">checking…</div></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="panel">
+    <h2>What the finished rows show</h2>
+    <div class="body">
+      <div class="split" id="split"></div>
+      <div class="legend" id="legend"></div>
+      <p class="note" style="margin:14px 0 0">
+        Score is 0–100 where <b>100 is clean</b>. At or below 50 is a severe gap;
+        anything under 100 is worth approaching. A site already running a consent
+        platform scores 100 however many trackers still slip through.
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Rows finished per day</h2>
+    <div class="body">
+      <div class="bars" id="bars"></div>
+      <p class="note" style="margin:14px 0 0">
+        Counted from the rows themselves (done, failed or no website), against a
+        daily quota. A row waiting on a retry does not count until it settles.
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Queue</h2>
+    <div class="body"><div class="q" id="queue"></div>
+      <p class="note" style="margin:14px 0 0">
+        <b>queued</b> not yet touched · <b>running</b> claimed by a run in progress ·
+        <b>retry</b> a page failed to load, tried again after 6h (3 attempts) ·
+        <b>failed</b> gave up · <b>no_website</b> nothing usable in the Website column.
+      </p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Rows</h2>
+    <div class="tools">
+      <input id="q" placeholder="search company or website" autocomplete="off">
+      <select id="st">
+        <option value="">recently touched</option>
+        <option>done</option><option>retry</option><option>failed</option>
+        <option>no_website</option><option>running</option><option>queued</option>
+      </select>
+    </div>
+    <div class="body tbl scroll"><table id="rows">
+      <thead><tr>
+        <th>when</th><th>company</th><th>website</th><th>status</th>
+        <th class="m">score</th><th class="m">trackers</th><th>banner</th><th>finding</th>
+      </tr></thead><tbody></tbody>
+    </table></div>
+  </div>
+</main>
+
+<script>
+const API = location.origin;
+const $ = id => document.getElementById(id);
+const num = n => (n ?? 0).toLocaleString();
+const clock = () => new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const when = t => t ? new Date(t).toLocaleString([], {month:'short', day:'numeric',
+  hour:'2-digit', minute:'2-digit'}) : '—';
+const hm = t => t ? new Date(t).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '—';
+
+function state(s) {
+  const q = s.queue || {};
+  const sched = s.run_at ? `runs daily at <b>${s.run_at}</b>, after the MCA run if that is still going`
+                         : 'runs right after the daily MCA run';
+  let dot, text;
+  if (s.paused) { dot = 'paused'; text = '<b>Paused</b> — delete data/partner.pause to resume'; }
+  else if (s.in_flight) { dot = 'on'; text = `<b>Running</b> — ${num(s.in_flight)} rows in flight`; }
+  else if (s.remaining_today === 0) { dot = ''; text = '<b>Done for today</b>'; }
+  else { dot = ''; text = '<b>Idle</b>'; }
+  const today = s.today_first ? ` · today ${hm(s.today_first)}–${hm(s.today_last)}` : '';
+  $('state').innerHTML = `<span class="dot ${dot}"></span>${text}
+    <span class="note">· ${sched}${today}</span>`;
+}
+
+function tiles(s) {
+  const q = s.queue || {};
+  const left = (q.queued || 0) + (q.retry || 0) + (q.running || 0);
+  const daysLeft = s.target ? Math.ceil(left / s.target) : 0;
+  $('tiles').innerHTML = [
+    [`${num(s.done_today)} <span style="font-size:15px;color:var(--muted)">/ ${num(s.target)}</span>`,
+     'finished today'],
+    [num(q.done), 'analysed in total'],
+    [num(left), 'still to do'],
+    [daysLeft ? `~${daysLeft} day${daysLeft > 1 ? 's' : ''}` : '—', `to clear at ${num(s.target)}/day`],
+  ].map(([n, l]) => `<div class="tile"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+}
+
+function verdicts(v) {
+  const parts = [
+    ['severe gap (≤50)', v.severe_gap, 'var(--crit)'],
+    ['gap (51–99)', v.gap, 'var(--warn)'],
+    ['clean (100)', v.clean, 'var(--line)'],
+    ['has a consent platform', v.has_cmp, 'var(--accent)'],
+  ];
+  const total = parts.reduce((a, p) => a + (p[1] || 0), 0) || 1;
+  $('split').innerHTML = parts.map(([l, n, c]) =>
+    `<div title="${l}: ${n}" style="width:${(n || 0) / total * 100}%;background:${c}"></div>`).join('');
+  $('legend').innerHTML = parts.map(([l, n, c]) =>
+    `<span><i style="background:${c}"></i>${l}<span class="n">${num(n)}</span></span>`).join('');
+}
+
+function bars(days) {
+  const have = Object.fromEntries(days.map(d => [d.day, d.leads]));
+  const rows = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = new Date(); d.setDate(d.getDate() - i);
+    const key = d.toLocaleDateString('en-CA');
+    rows.push({day: key, leads: have[key] ?? 0});
+  }
+  const max = Math.max(1, ...rows.map(r => r.leads));
+  $('bars').innerHTML = rows.map(r => {
+    const h = Math.round((r.leads / max) * 118);
+    const label = new Date(r.day + 'T00:00').toLocaleDateString([], {day:'numeric', month:'short'});
+    return `<div class="bar" title="${label}: ${r.leads} rows">
+      <div class="c">${r.leads || ''}</div>
+      <div class="v" style="height:${h}px"></div>
+      <div class="t">${label}</div></div>`;
+  }).join('');
+}
+
+const ORDER = ['queued', 'running', 'retry', 'done', 'failed', 'no_website'];
+function queue(q) {
+  const keys = ORDER.filter(k => k in q).concat(Object.keys(q).filter(k => !ORDER.includes(k)));
+  $('queue').innerHTML = keys.map(k =>
+    `<div class="qi"><div class="n">${num(q[k])}</div><div class="l">${k}</div></div>`).join('');
+}
+
+const PILL = {done:'ok', running:'wait', retry:'wait', failed:'bad', no_website:'bad', queued:''};
+function scoreCell(r) {
+  if (r.gap_score == null) return '—';
+  const cmp = (r.finding || '').startsWith('CMP detected');
+  const cls = cmp || r.gap_score >= 100 ? 'cln' : r.gap_score <= 50 ? 'sev' : 'mid';
+  return `<span class="score ${cls}">${r.gap_score}${cmp ? ' cmp' : ''}</span>`;
+}
+function rows(list) {
+  $('rows').tBodies[0].innerHTML = list.map(r => `<tr>
+      <td class="m">${when(r.scraped_at)}</td>
+      <td>${esc(r.company)}</td>
+      <td class="m">${esc(r.website)}</td>
+      <td><span class="pill ${PILL[r.status] ?? ''}">${esc(r.status)}${r.attempts ? ' ·' + r.attempts : ''}</span></td>
+      <td class="m">${scoreCell(r)}</td>
+      <td class="m">${r.trackers ?? '—'}</td>
+      <td>${esc(r.banner ?? '—')}</td>
+      <td class="find">${esc((r.finding || '').slice(0, 140))}</td>
+    </tr>`).join('') || '<tr><td colspan="8" class="note">no rows</td></tr>';
+}
+
+async function loadRows() {
+  const p = new URLSearchParams({limit: 100});
+  if ($('st').value) p.set('status', $('st').value);
+  if ($('q').value.trim()) p.set('q', $('q').value.trim());
+  rows(await fetch(`${API}/api/partner/rows?${p}`).then(r => r.json()));
+}
+
+async function load() {
+  try {
+    const s = await fetch(`${API}/api/partner/status`).then(r => {
+      if (!r.ok) throw new Error(r.status + ' ' + r.statusText); return r.json(); });
+    state(s); tiles(s); verdicts(s.verdicts); bars(s.per_day); queue(s.queue);
+    await loadRows();
+    $('refreshed').textContent = 'updated ' + clock();
+  } catch (e) {
+    $('state').innerHTML = `<span class="err" style="padding:0">could not reach the CRM database: ${esc(e)}</span>`;
+    $('refreshed').textContent = 'offline';
+  }
+}
+
+let t;
+$('q').addEventListener('input', () => { clearTimeout(t); t = setTimeout(loadRows, 300); });
+$('st').addEventListener('change', loadRows);
+$('clock').textContent = clock();
+setInterval(() => $('clock').textContent = clock(), 30000);
+load();
+setInterval(load, 60000);
+</script>

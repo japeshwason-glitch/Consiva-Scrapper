@@ -8,6 +8,7 @@ Three audiences, three groups of endpoints:
   /api/leads*      the CRM integration — pull undelivered leads, mark them taken
   /api/pipeline/*  operations — where today stands, run history, queue depth
   /api/companies*  the dashboard — browse and inspect what was found
+  /api/partner/*   partner-imported rows in the CRM table (job 3) — progress
 
 Read-only over the pipeline's own state except for marking leads delivered.
 Running the pipeline is the scheduler's job (run_daily.py under systemd), not
@@ -15,6 +16,7 @@ this service: a request-scoped background task dies with the process and has no
 restart semantics, which is exactly what a machine that loses power needs.
 """
 
+import os
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -145,6 +147,116 @@ def throughput(days: int = Query(14, le=90)):
         return [dict(r) for r in cur.fetchall()]
 
 
+# ------------------------------------------------------------ partner import
+
+# These rows live in the sales team's SQL Server, not our Postgres, so the
+# queries go there. Contact names and emails are never selected: the page is an
+# activity view, and it has no business carrying a partner's people.
+PARTNER_WHERE = "Source = 'PartnerImport'"
+
+
+def _crm():
+    import crm_push
+    return crm_push.connect()
+
+
+@app.get("/api/partner/status", tags=["partner"])
+def partner_status(days: int = Query(14, le=90)):
+    """Queue by ScrapeStatus, today's quota, verdicts, and per-day throughput."""
+    import partner_import_analyse as pia
+    conn = _crm()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"""SELECT COALESCE(ScrapeStatus, 'queued'), COUNT(*)
+                        FROM {pia.TABLE} WHERE {PARTNER_WHERE}
+                        GROUP BY ScrapeStatus""")
+        queue = dict(cur.fetchall())
+        done_today = pia.done_today(conn)
+        cur.execute(f"""
+            SELECT SUM(CASE WHEN ConsentFinding LIKE 'CMP detected%%' THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN ConsentFinding NOT LIKE 'CMP detected%%'
+                             AND GapScore <= %s THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN ConsentFinding NOT LIKE 'CMP detected%%'
+                             AND GapScore > %s AND GapScore < %s THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN ConsentFinding NOT LIKE 'CMP detected%%'
+                             AND GapScore >= %s THEN 1 ELSE 0 END)
+            FROM {pia.TABLE} WHERE {PARTNER_WHERE} AND ScrapeStatus = 'done'""",
+            (fingerprints.SEVERE_AT, fingerprints.SEVERE_AT, fingerprints.ALIGNED,
+             fingerprints.ALIGNED))
+        cmp_, severe, gap, clean = (n or 0 for n in cur.fetchone())
+        # ScrapedAt is UTC; bucket by IST day, the day the quota counts in.
+        cur.execute(f"""
+            SELECT CAST(DATEADD(minute, 330, ScrapedAt) AS date) AS day, COUNT(*)
+            FROM {pia.TABLE}
+            WHERE {PARTNER_WHERE} AND ScrapeStatus IN ('done', 'failed', 'no_website')
+              AND ScrapedAt >= DATEADD(day, -%s, SYSUTCDATETIME())
+            GROUP BY CAST(DATEADD(minute, 330, ScrapedAt) AS date)
+            ORDER BY day DESC""", (days,))
+        per_day = [{"day": d.isoformat(), "leads": n} for d, n in cur.fetchall()]
+        cur.execute(f"""SELECT MIN(ScrapedAt), MAX(ScrapedAt) FROM {pia.TABLE}
+                        WHERE {PARTNER_WHERE} AND ScrapedAt >= %s""",
+                    (pia.today_start_utc(),))
+        first, last = cur.fetchone()
+        cur.execute(f"""SELECT COUNT(*) FROM {pia.TABLE} WHERE {PARTNER_WHERE}
+                        AND ScrapeStatus = 'running'
+                        AND ScrapedAt >= DATEADD(minute, -30, SYSUTCDATETIME())""")
+        in_flight = cur.fetchone()[0]
+    finally:
+        conn.close()
+    utc = lambda t: t.isoformat() + "Z" if t else None
+    return {
+        "date": date.today().isoformat(),
+        "done_today": done_today,
+        "target": pia.DAILY_TARGET,
+        "remaining_today": max(0, pia.DAILY_TARGET - done_today),
+        "queue": queue,
+        "verdicts": {"severe_gap": severe, "gap": gap, "clean": clean, "has_cmp": cmp_},
+        "per_day": per_day,
+        "today_first": utc(first),
+        "today_last": utc(last),
+        "in_flight": in_flight,
+        "paused": pia.PAUSE_FILE.exists(),
+        "run_at": os.environ.get("PARTNER_RUN_AT") or None,
+    }
+
+
+@app.get("/api/partner/rows", tags=["partner"])
+def partner_rows(status: Optional[str] = None, q: str = "",
+                 limit: int = Query(100, le=500)):
+    """Most recently touched partner rows, newest first."""
+    import partner_import_analyse as pia
+    where, params = [PARTNER_WHERE], []
+    if status == "queued":
+        where.append("ScrapeStatus IS NULL")
+    elif status:
+        where.append("ScrapeStatus = %s")
+        params.append(status)
+    if q:
+        where.append("(CompanyName LIKE %s OR Website LIKE %s)")
+        params += [f"%{q}%", f"%{q}%"]
+    conn = _crm()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"""
+            SELECT TOP ({int(limit)}) Id, CompanyName, Website,
+                   COALESCE(ScrapeStatus, 'queued'), ScrapeAttempts, ScrapedAt,
+                   GapScore, TrackersPreConsent, ThirdPartiesCount, CookieBanner,
+                   CompanyScale, Industry, ConsentFinding
+            FROM {pia.TABLE} WHERE {' AND '.join(where)}
+            ORDER BY CASE WHEN ScrapedAt IS NULL THEN 1 ELSE 0 END,
+                     ScrapedAt DESC, Id""", tuple(params))
+        cols = ("id", "company", "website", "status", "attempts", "scraped_at",
+                "gap_score", "trackers", "third_parties", "banner", "scale",
+                "industry", "finding")
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+    finally:
+        conn.close()
+    for r in rows:
+        if r["scraped_at"]:
+            r["scraped_at"] = r["scraped_at"].isoformat() + "Z"
+    return rows
+
+
 # ------------------------------------------------------------------- dashboard
 
 @app.get("/api/stats", tags=["dashboard"])
@@ -230,3 +342,8 @@ if UI_DIR.exists():
     def ops():
         """Daily activity: throughput, queue depth and the stage run log."""
         return FileResponse(UI_DIR / "ops.html")
+
+    @app.get("/partner", include_in_schema=False)
+    def partner():
+        """Partner-import activity: queue, today's quota, verdicts, recent rows."""
+        return FileResponse(UI_DIR / "partner.html")

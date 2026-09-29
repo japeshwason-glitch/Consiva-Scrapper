@@ -274,7 +274,7 @@ async def run(conn, quota, deadline):
                         tally["no_website"] += 1
                 for row, data in await analyse(browser, usable):
                     record(conn, row, data, tally)
-                left = quota - done_today(conn)
+                left = DAILY_TARGET - done_today(conn)
         finally:
             await browser.close()
     return tally

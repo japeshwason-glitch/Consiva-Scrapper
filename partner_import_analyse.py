@@ -51,6 +51,7 @@ CHUNK = 50                 # rows per claim: a crash reworks at most this many
 CONCURRENCY = 6            # same page-load concurrency as the MCA scrape
 MAX_ATTEMPTS = 3           # same as db.MAX_RETRIES for the MCA pipeline
 STALE_CLAIM_H = 6          # a 'running' row this old belongs to a dead run
+SITE_TIMEOUT_S = 120       # whole scrape of one site, all subpages included
 TABLE = config.CRM_DB_TABLE
 # Touch this file (data/ is mounted from the host) to stop the job starting;
 # delete it to resume. Checked once at start, so a run in flight is unaffected.
@@ -215,8 +216,14 @@ async def analyse(browser, rows):
             try:
                 # use_llm=False: the tagline and soft fields it would extract
                 # have no column on this table.
-                data, err = await _stage03.scrape_one(browser, company, False)
+                # Bounded as a whole, not just per page.goto: a site that
+                # hangs after load would otherwise hold the entire chunk,
+                # since nothing is written until every row in it returns.
+                data, err = await asyncio.wait_for(
+                    _stage03.scrape_one(browser, company, False), SITE_TIMEOUT_S)
                 return row, (data if data else {"error": err or "no data"})
+            except asyncio.TimeoutError:
+                return row, {"error": f"site did not finish within {SITE_TIMEOUT_S}s"}
             except Exception as exc:
                 return row, {"error": f"{type(exc).__name__}: {exc}"[:200]}
 

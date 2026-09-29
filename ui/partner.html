@@ -126,8 +126,8 @@ td.find{max-width:46ch;color:var(--muted);font-size:12px}
     <div class="body">
       <div class="bars" id="bars"></div>
       <p class="note" style="margin:14px 0 0">
-        Counted from the rows themselves (done, failed or no website), against a
-        daily quota. A row waiting on a retry does not count until it settles.
+        Counted from the rows themselves (done or failed), against a daily
+        quota. Rows without a website are skipped and never counted. A row waiting on a retry does not count until it settles.
       </p>
     </div>
   </div>
@@ -138,7 +138,7 @@ td.find{max-width:46ch;color:var(--muted);font-size:12px}
       <p class="note" style="margin:14px 0 0">
         <b>queued</b> not yet touched · <b>running</b> claimed by a run in progress ·
         <b>retry</b> a page failed to load, tried again after 6h (3 attempts) ·
-        <b>failed</b> gave up · <b>no_website</b> nothing usable in the Website column.
+        <b>failed</b> gave up · <b>no_website</b> the partner gave no website — skipped, not counted toward the daily quota.
       </p>
     </div>
   </div>

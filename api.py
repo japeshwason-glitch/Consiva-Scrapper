@@ -167,9 +167,9 @@ def partner_status(days: int = Query(14, le=90)):
     conn = _crm()
     try:
         cur = conn.cursor()
-        cur.execute(f"""SELECT COALESCE(ScrapeStatus, 'queued'), COUNT(*)
+        cur.execute(f"""SELECT {pia.QUEUE_LABEL}, COUNT(*)
                         FROM {pia.TABLE} WHERE {PARTNER_WHERE}
-                        GROUP BY ScrapeStatus""")
+                        GROUP BY {pia.QUEUE_LABEL}""")
         queue = dict(cur.fetchall())
         done_today = pia.done_today(conn)
         cur.execute(f"""
@@ -188,7 +188,7 @@ def partner_status(days: int = Query(14, le=90)):
         cur.execute(f"""
             SELECT CAST(DATEADD(minute, 330, ScrapedAt) AS date) AS day, COUNT(*)
             FROM {pia.TABLE}
-            WHERE {PARTNER_WHERE} AND ScrapeStatus IN ('done', 'failed', 'no_website')
+            WHERE {PARTNER_WHERE} AND ScrapeStatus IN ('done', 'failed')
               AND ScrapedAt >= DATEADD(day, -%s, SYSUTCDATETIME())
             GROUP BY CAST(DATEADD(minute, 330, ScrapedAt) AS date)
             ORDER BY day DESC""", (days,))
@@ -227,7 +227,10 @@ def partner_rows(status: Optional[str] = None, q: str = "",
     import partner_import_analyse as pia
     where, params = [PARTNER_WHERE], []
     if status == "queued":
-        where.append("ScrapeStatus IS NULL")
+        where.append(f"ScrapeStatus IS NULL AND {pia.HAS_WEBSITE}")
+    elif status == "no_website":
+        where.append(f"(ScrapeStatus = 'no_website' OR "
+                     f"(ScrapeStatus IS NULL AND NOT {pia.HAS_WEBSITE}))")
     elif status:
         where.append("ScrapeStatus = %s")
         params.append(status)
@@ -239,7 +242,7 @@ def partner_rows(status: Optional[str] = None, q: str = "",
         cur = conn.cursor()
         cur.execute(f"""
             SELECT TOP ({int(limit)}) Id, CompanyName, Website,
-                   COALESCE(ScrapeStatus, 'queued'), ScrapeAttempts, ScrapedAt,
+                   {pia.QUEUE_LABEL}, ScrapeAttempts, ScrapedAt,
                    GapScore, TrackersPreConsent, ThirdPartiesCount, CookieBanner,
                    CompanyScale, Industry, ConsentFinding
             FROM {pia.TABLE} WHERE {' AND '.join(where)}

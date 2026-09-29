@@ -84,26 +84,35 @@ def today_start_utc():
 
 
 def done_today(conn):
-    """Rows finished today, success or terminal failure -- the quota counter."""
+    """Sites finished today, success or terminal failure -- the quota counter."""
     cur = conn.cursor()
     cur.execute(f"""SELECT COUNT(*) FROM {TABLE}
                     WHERE Source = %s AND ScrapedAt >= %s
-                      AND ScrapeStatus IN ('done', 'failed', 'no_website')""",
+                      AND ScrapeStatus IN ('done', 'failed')""",
                 (SOURCE, today_start_utc()))
     return cur.fetchone()[0]
 
 
 # 'retry' waits out the same gap as a stale claim, so a site that is down for
 # an hour is not burned through all its attempts inside a single run.
-QUEUED = f"""Source = %s AND (ScrapeStatus IS NULL
+# A row with no Website is skipped outright, never claimed, written or counted:
+# the partner bought that list in, and a guessed domain is not worth sending.
+HAS_WEBSITE = "NULLIF(LTRIM(RTRIM(Website)), '') IS NOT NULL"
+
+QUEUED = f"""Source = %s AND {HAS_WEBSITE} AND (ScrapeStatus IS NULL
              OR (ScrapeStatus IN ('running', 'retry')
                  AND ScrapedAt < DATEADD(hour, -{STALE_CLAIM_H}, SYSUTCDATETIME())))"""
 
 
+# Unclaimed rows without a Website are reported as no_website, not queued.
+QUEUE_LABEL = f"""CASE WHEN ScrapeStatus IS NOT NULL THEN ScrapeStatus
+                      WHEN {HAS_WEBSITE} THEN 'queued' ELSE 'no_website' END"""
+
+
 def status(conn):
     cur = conn.cursor()
-    cur.execute(f"""SELECT COALESCE(ScrapeStatus, 'queued'), COUNT(*) FROM {TABLE}
-                    WHERE Source = %s GROUP BY ScrapeStatus""", (SOURCE,))
+    cur.execute(f"""SELECT {QUEUE_LABEL}, COUNT(*) FROM {TABLE}
+                    WHERE Source = %s GROUP BY {QUEUE_LABEL}""", (SOURCE,))
     counts = dict(cur.fetchall())
     print(f"{SOURCE} rows in {config.CRM_DB_NAME}.{TABLE}: {counts or 'none'}")
     print(f"finished today: {done_today(conn)} / {DAILY_TARGET}")

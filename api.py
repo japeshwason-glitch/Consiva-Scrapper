@@ -16,7 +16,9 @@ this service: a request-scoped background task dies with the process and has no
 restart semantics, which is exactly what a machine that loses power needs.
 """
 
+import faulthandler
 import os
+import signal
 from datetime import date
 from pathlib import Path
 from typing import Optional
@@ -27,8 +29,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import crm_push
 import db
 import fingerprints
+import partner_import_analyse as pia
+
+# `kill -USR1 <worker pid>` prints every thread's stack to the container log.
+# Added after the partner endpoints wedged with every thread parked on a lock
+# and nothing to say which one.
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 app = FastAPI(
     title="Consiva pipeline",
@@ -156,14 +165,12 @@ PARTNER_WHERE = "Source = 'PartnerImport'"
 
 
 def _crm():
-    import crm_push
     return crm_push.connect()
 
 
 @app.get("/api/partner/status", tags=["partner"])
 def partner_status(days: int = Query(14, le=90)):
     """Queue by ScrapeStatus, today's quota, verdicts, and per-day throughput."""
-    import partner_import_analyse as pia
     conn = _crm()
     try:
         cur = conn.cursor()
@@ -224,7 +231,6 @@ def partner_status(days: int = Query(14, le=90)):
 def partner_rows(status: Optional[str] = None, q: str = "",
                  limit: int = Query(100, le=500)):
     """Most recently touched partner rows, newest first."""
-    import partner_import_analyse as pia
     where, params = [PARTNER_WHERE], []
     if status == "queued":
         where.append(f"ScrapeStatus IS NULL AND {pia.HAS_WEBSITE}")

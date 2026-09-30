@@ -182,8 +182,12 @@ function state(s) {
   else if (s.remaining_today === 0) { dot = ''; text = '<b>Done for today</b>'; }
   else { dot = ''; text = '<b>Idle</b>'; }
   const today = s.today_first ? ` · today ${hm(s.today_first)}–${hm(s.today_last)}` : '';
+  // The page reads a copy refreshed about once a minute, never the CRM itself.
+  const asOf = s.snapshot_at ? ` · data as of ${hm(s.snapshot_at)}` : '';
+  const stale = s.snapshot_stale
+    ? ` <span class="pill bad">stale — the CRM database is not answering; showing the last copy</span>` : '';
   $('state').innerHTML = `<span class="dot ${dot}"></span>${text}
-    <span class="note">· ${sched}${today}</span>`;
+    <span class="note">· ${sched}${today}${asOf}</span>${stale}`;
 }
 
 function tiles(s) {
@@ -274,7 +278,7 @@ async function load() {
     await loadRows();
     $('refreshed').textContent = 'updated ' + clock();
   } catch (e) {
-    $('state').innerHTML = `<span class="err" style="padding:0">could not reach the CRM database: ${esc(e)}</span>`;
+    $('state').innerHTML = `<span class="err" style="padding:0">could not load partner data: ${esc(e)}</span>`;
     $('refreshed').textContent = 'offline';
   }
 }

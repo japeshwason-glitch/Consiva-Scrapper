@@ -17,9 +17,14 @@ restart semantics, which is exactly what a machine that loses power needs.
 """
 
 import faulthandler
+import json
 import os
 import signal
-from datetime import date
+import subprocess
+import sys
+import threading
+import time
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -29,7 +34,6 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-import crm_push
 import db
 import fingerprints
 import partner_import_analyse as pia
@@ -158,72 +162,122 @@ def throughput(days: int = Query(14, le=90)):
 
 # ------------------------------------------------------------ partner import
 
-# These rows live in the sales team's SQL Server, not our Postgres, so the
-# queries go there. Contact names and emails are never selected: the page is an
-# activity view, and it has no business carrying a partner's people.
-PARTNER_WHERE = "Source = 'PartnerImport'"
+# These rows live in the sales team's SQL Server, and requests never touch it.
+# Querying it per request twice wedged every worker thread while the CRM link
+# was flaky. A refresher runs partner_snapshot.py as a separate process under
+# a hard timeout and the endpoints read the file it writes, so a hung CRM
+# means stale numbers on the page, never a frozen API.
+SNAPSHOT_PATH = Path("/tmp/partner_snapshot.json")
+SNAPSHOT_LOCK = Path("/tmp/partner_snapshot.lock")
+SNAPSHOT_EVERY_S = 60
+SNAPSHOT_TIMEOUT_S = 90
+STALE_AFTER_S = 5 * 60
+
+_snap_cache = {"mtime": None, "data": None}
 
 
-def _crm():
-    return crm_push.connect()
+def _refresh_snapshot():
+    """One refresh, by whichever worker holds the lock; the rest skip."""
+    import fcntl
+    with open(SNAPSHOT_LOCK, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        try:
+            age = time.time() - SNAPSHOT_PATH.stat().st_mtime
+        except FileNotFoundError:
+            age = None
+        if age is not None and age < SNAPSHOT_EVERY_S - 15:
+            return          # another worker refreshed it moments ago
+        try:
+            subprocess.run([sys.executable, str(Path(__file__).parent / "partner_snapshot.py"),
+                            str(SNAPSHOT_PATH)],
+                           timeout=SNAPSHOT_TIMEOUT_S, capture_output=True)
+        except subprocess.TimeoutExpired:
+            print(f"partner snapshot timed out after {SNAPSHOT_TIMEOUT_S}s "
+                  f"-- serving the previous one", flush=True)
+
+
+def _snapshot_loop():
+    while True:
+        try:
+            _refresh_snapshot()
+        except Exception as exc:
+            print(f"partner snapshot refresh failed: {exc}", flush=True)
+        time.sleep(SNAPSHOT_EVERY_S)
+
+
+threading.Thread(target=_snapshot_loop, daemon=True, name="partner-snapshot").start()
+
+
+def _snapshot():
+    try:
+        mtime = SNAPSHOT_PATH.stat().st_mtime
+    except FileNotFoundError:
+        raise HTTPException(503, "partner data is still loading -- try again in a minute")
+    if _snap_cache["mtime"] != mtime:
+        _snap_cache["data"] = json.loads(SNAPSHOT_PATH.read_text())
+        _snap_cache["mtime"] = mtime
+    return _snap_cache["data"]
+
+
+def _utc(ts):
+    return datetime.fromisoformat(ts.replace("Z", "+00:00")) if ts else None
 
 
 @app.get("/api/partner/status", tags=["partner"])
 def partner_status(days: int = Query(14, le=90)):
     """Queue by ScrapeStatus, today's quota, verdicts, and per-day throughput."""
-    conn = _crm()
-    try:
-        cur = conn.cursor()
-        cur.execute(f"""SELECT {pia.QUEUE_LABEL}, COUNT(*)
-                        FROM {pia.TABLE} WHERE {PARTNER_WHERE}
-                        GROUP BY {pia.QUEUE_LABEL}""")
-        queue = dict(cur.fetchall())
-        done_today = pia.done_today(conn)
-        cur.execute(f"""
-            SELECT SUM(CASE WHEN ConsentFinding LIKE 'CMP detected%%' THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN ConsentFinding NOT LIKE 'CMP detected%%'
-                             AND GapScore <= %s THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN ConsentFinding NOT LIKE 'CMP detected%%'
-                             AND GapScore > %s AND GapScore < %s THEN 1 ELSE 0 END),
-                   SUM(CASE WHEN ConsentFinding NOT LIKE 'CMP detected%%'
-                             AND GapScore >= %s THEN 1 ELSE 0 END)
-            FROM {pia.TABLE} WHERE {PARTNER_WHERE} AND ScrapeStatus = 'done'""",
-            (fingerprints.SEVERE_AT, fingerprints.SEVERE_AT, fingerprints.ALIGNED,
-             fingerprints.ALIGNED))
-        cmp_, severe, gap, clean = (n or 0 for n in cur.fetchone())
-        # ScrapedAt is UTC; bucket by IST day, the day the quota counts in.
-        cur.execute(f"""
-            SELECT CAST(DATEADD(minute, 330, ScrapedAt) AS date) AS day, COUNT(*)
-            FROM {pia.TABLE}
-            WHERE {PARTNER_WHERE} AND ScrapeStatus IN ('done', 'failed')
-              AND ScrapedAt >= DATEADD(day, -%s, SYSUTCDATETIME())
-            GROUP BY CAST(DATEADD(minute, 330, ScrapedAt) AS date)
-            ORDER BY day DESC""", (days,))
-        per_day = [{"day": d.isoformat(), "leads": n} for d, n in cur.fetchall()]
-        cur.execute(f"""SELECT MIN(ScrapedAt), MAX(ScrapedAt) FROM {pia.TABLE}
-                        WHERE {PARTNER_WHERE} AND ScrapedAt >= %s""",
-                    (pia.today_start_utc(),))
-        first, last = cur.fetchone()
-        cur.execute(f"""SELECT COUNT(*) FROM {pia.TABLE} WHERE {PARTNER_WHERE}
-                        AND ScrapeStatus = 'running'
-                        AND ScrapedAt >= DATEADD(minute, -30, SYSUTCDATETIME())""")
-        in_flight = cur.fetchone()[0]
-    finally:
-        conn.close()
-    utc = lambda t: t.isoformat() + "Z" if t else None
+    snap = _snapshot()
+    rows = snap["rows"]
+    now = datetime.now(timezone.utc)
+    today = pia.today_start_utc().replace(tzinfo=timezone.utc)
+    ist = timedelta(minutes=330)        # the quota counts IST days
+
+    queue, per_day = {}, {}
+    verdicts = {"severe_gap": 0, "gap": 0, "clean": 0, "has_cmp": 0}
+    done_today = in_flight = 0
+    touched_today = []
+    for r in rows:
+        queue[r["status"]] = queue.get(r["status"], 0) + 1
+        at = _utc(r["scraped_at"])
+        finished = r["status"] in ("done", "failed")
+        if at and at >= today:
+            touched_today.append(at)
+            done_today += finished
+        if finished and at and at >= now - timedelta(days=days):
+            day = (at + ist).date().isoformat()
+            per_day[day] = per_day.get(day, 0) + 1
+        if r["status"] == "running" and at and at >= now - timedelta(minutes=30):
+            in_flight += 1
+        if r["status"] == "done" and r["gap_score"] is not None:
+            if (r["finding"] or "").startswith("CMP detected"):
+                verdicts["has_cmp"] += 1
+            elif r["gap_score"] <= fingerprints.SEVERE_AT:
+                verdicts["severe_gap"] += 1
+            elif r["gap_score"] < fingerprints.ALIGNED:
+                verdicts["gap"] += 1
+            else:
+                verdicts["clean"] += 1
+
+    taken = _utc(snap["taken_at"])
+    iso = lambda t: t.isoformat().replace("+00:00", "Z") if t else None
     return {
         "date": date.today().isoformat(),
         "done_today": done_today,
         "target": pia.DAILY_TARGET,
         "remaining_today": max(0, pia.DAILY_TARGET - done_today),
         "queue": queue,
-        "verdicts": {"severe_gap": severe, "gap": gap, "clean": clean, "has_cmp": cmp_},
-        "per_day": per_day,
-        "today_first": utc(first),
-        "today_last": utc(last),
+        "verdicts": verdicts,
+        "per_day": [{"day": d, "leads": n} for d, n in sorted(per_day.items(), reverse=True)],
+        "today_first": iso(min(touched_today)) if touched_today else None,
+        "today_last": iso(max(touched_today)) if touched_today else None,
         "in_flight": in_flight,
         "paused": pia.PAUSE_FILE.exists(),
         "run_at": os.environ.get("PARTNER_RUN_AT") or None,
+        "snapshot_at": iso(taken),
+        "snapshot_stale": (now - taken).total_seconds() > STALE_AFTER_S,
     }
 
 
@@ -231,39 +285,18 @@ def partner_status(days: int = Query(14, le=90)):
 def partner_rows(status: Optional[str] = None, q: str = "",
                  limit: int = Query(100, le=500)):
     """Most recently touched partner rows, newest first."""
-    where, params = [PARTNER_WHERE], []
-    if status == "queued":
-        where.append(f"ScrapeStatus IS NULL AND {pia.HAS_WEBSITE}")
-    elif status == "no_website":
-        where.append(f"(ScrapeStatus = 'no_website' OR "
-                     f"(ScrapeStatus IS NULL AND NOT {pia.HAS_WEBSITE}))")
-    elif status:
-        where.append("ScrapeStatus = %s")
-        params.append(status)
+    rows = _snapshot()["rows"]
+    if status:
+        rows = [r for r in rows if r["status"] == status]
     if q:
-        where.append("(CompanyName LIKE %s OR Website LIKE %s)")
-        params += [f"%{q}%", f"%{q}%"]
-    conn = _crm()
-    try:
-        cur = conn.cursor()
-        cur.execute(f"""
-            SELECT TOP ({int(limit)}) Id, CompanyName, Website,
-                   {pia.QUEUE_LABEL}, ScrapeAttempts, ScrapedAt,
-                   GapScore, TrackersPreConsent, ThirdPartiesCount, CookieBanner,
-                   CompanyScale, Industry, ConsentFinding
-            FROM {pia.TABLE} WHERE {' AND '.join(where)}
-            ORDER BY CASE WHEN ScrapedAt IS NULL THEN 1 ELSE 0 END,
-                     ScrapedAt DESC, Id""", tuple(params))
-        cols = ("id", "company", "website", "status", "attempts", "scraped_at",
-                "gap_score", "trackers", "third_parties", "banner", "scale",
-                "industry", "finding")
-        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-    finally:
-        conn.close()
-    for r in rows:
-        if r["scraped_at"]:
-            r["scraped_at"] = r["scraped_at"].isoformat() + "Z"
-    return rows
+        needle = q.lower()
+        rows = [r for r in rows if needle in (r["company"] or "").lower()
+                or needle in (r["website"] or "").lower()]
+    # Newest first, untouched rows last, ties by Id. reverse=True keeps the
+    # sort stable, so the Id order from the first pass survives among ties.
+    rows = sorted(rows, key=lambda r: r["id"])
+    rows.sort(key=lambda r: r["scraped_at"] or "", reverse=True)
+    return rows[:limit]
 
 
 # ------------------------------------------------------------------- dashboard

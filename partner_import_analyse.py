@@ -25,13 +25,22 @@ Rows are CLAIMED (set to 'running') in one atomic UPDATE before any page is
 loaded, so two runs can never work the same lead. A claim older than
 STALE_CLAIM_H is treated as a crashed run and becomes claimable again, so a
 power cut costs at most one chunk of rework, never a stuck row.
+
+Every CRM call is bounded by DB_TIMEOUT_S. On a connection the server has
+dropped, a pymssql call can block inside FreeTDS for good -- its own timeout
+never fires -- and that froze the one-off partner rescan mid-run. A call past
+its limit exits the job with EXIT_DB_HUNG instead; the rows it had claimed
+become claimable again after STALE_CLAIM_H, as after any crash.
 """
 import argparse
 import asyncio
+import functools
 import os
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -59,7 +68,33 @@ PAUSE_FILE = Path(__file__).resolve().parent / "data" / "partner.pause"
 
 NUMERIC = ("GapScore", "TrackersPreConsent", "ThirdPartiesCount")
 
+DB_TIMEOUT_S = 60          # any single CRM call; far above a healthy one
+EXIT_DB_HUNG = 75          # EX_TEMPFAIL: the CRM link, not the job, is at fault
 
+
+def bounded(fn):
+    """
+    Runs a CRM call on a helper thread and waits at most DB_TIMEOUT_S. A thread
+    stuck in FreeTDS cannot be interrupted, so past the limit the whole process
+    exits -- the only way to get out from under it.
+    """
+    @functools.wraps(fn)
+    def call(*args, **kwargs):
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(fn, *args, **kwargs)
+        try:
+            return future.result(timeout=DB_TIMEOUT_S)
+        except FuturesTimeout:
+            print(f"CRM call {fn.__name__}() did not return within {DB_TIMEOUT_S}s "
+                  f"-- the connection is likely dead. Exiting; claimed rows become "
+                  f"claimable again after {STALE_CLAIM_H}h.", flush=True)
+            os._exit(EXIT_DB_HUNG)
+        finally:
+            pool.shutdown(wait=False)
+    return call
+
+
+@bounded
 def ensure_columns(conn):
     """Add the three tracking columns if missing. Idempotent."""
     cur = conn.cursor()
@@ -84,6 +119,7 @@ def today_start_utc():
     return midnight.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+@bounded
 def done_today(conn):
     """Sites finished today, success or terminal failure -- the quota counter."""
     cur = conn.cursor()
@@ -110,6 +146,7 @@ QUEUE_LABEL = f"""CASE WHEN ScrapeStatus IS NOT NULL THEN ScrapeStatus
                       WHEN {HAS_WEBSITE} THEN 'queued' ELSE 'no_website' END"""
 
 
+@bounded
 def status(conn):
     cur = conn.cursor()
     cur.execute(f"""SELECT {QUEUE_LABEL}, COUNT(*) FROM {TABLE}
@@ -119,6 +156,7 @@ def status(conn):
     print(f"finished today: {done_today(conn)} / {DAILY_TARGET}")
 
 
+@bounded
 def claim(conn, n):
     """Atomically mark up to n queued rows 'running' and return them."""
     cur = conn.cursor()
@@ -136,6 +174,7 @@ def claim(conn, n):
     return rows
 
 
+@bounded
 def peek(conn, n):
     cur = conn.cursor()
     cur.execute(f"SELECT TOP ({int(n)}) Id, CompanyName, Website FROM {TABLE} "
@@ -187,6 +226,7 @@ def values_for(row, data):
     }
 
 
+@bounded
 def finish(conn, row_id, state, values=None, attempts=None):
     """Write the findings (blanks only) and the row's final ScrapeStatus."""
     values = {k: v for k, v in (values or {}).items() if v is not None}
@@ -300,7 +340,7 @@ def main():
         print(f"partner import paused ({PAUSE_FILE.name} present) -- delete it to resume")
         return
 
-    conn = crm_push.connect()
+    conn = bounded(crm_push.connect)()
     ensure_columns(conn)
     if args.status:
         status(conn)

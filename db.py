@@ -185,6 +185,23 @@ def advance_status(cin, new_status, **fields):
         cur.execute(query, params)
 
 
+def update_fields(cin, **fields):
+    """
+    Overwrites the given columns on one row and nothing else -- status,
+    retry_count, last_error and updated_at are left as they are. For correcting
+    findings on rows already measured (re-classifying stored cookies), where
+    advance_status() would wipe a not_a_lead reason from last_error and re-date
+    every row it touched.
+    """
+    if not fields:
+        return
+    fields = _serialize_json_fields(fields)
+    set_clauses = ", ".join(f"{k} = %s" for k in fields)
+    with get_cursor() as cur:
+        cur.execute(f"UPDATE companies SET {set_clauses} WHERE cin = %s",
+                    [*fields.values(), cin])
+
+
 def mark_failed(cin, stage_status_prefix, error_msg):
     """
     Increments retry_count. If still under MAX_RETRIES, the row stays at its

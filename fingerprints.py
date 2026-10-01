@@ -61,19 +61,77 @@ PRIVACY_LINK_PATTERNS = (
     r"data[-_ ]?protection",
 )
 
+# Bumped whenever cookie classification changes, so a stored result can be
+# traced to the rules that produced it.
+FINGERPRINTS_VERSION = "2026-10-cookie-fix.2"
+
+# --- Cookies that are strictly necessary --------------------------------------
+# Checked before anything else, and never a finding: bot protection, load
+# balancing, sessions, CSRF and remembered consent choices are what a site needs
+# to work (or to honour a refusal). Counting them as trackers put reCAPTCHA and
+# Cloudflare into the sales-facing finding as "tracking cookies set before
+# consent". Exact name, or prefix where the entry ends in '*'.
+NECESSARY_COOKIES = (
+    # bot / security
+    "_GRECAPTCHA", "__cf_bm", "cf_clearance", "__cfruid", "_cfuvid", "cf_chl_*",
+    # load balancers
+    "AWSALB", "AWSALBCORS", "AWSALBTG", "AWSALBTGCORS",
+    "ARRAffinity", "ARRAffinitySameSite",
+    # sessions
+    "PHPSESSID", "JSESSIONID", "ASP.NET_SessionId", "ASPSESSIONID*",
+    "laravel_session", "ci_session",
+    # CSRF
+    "csrftoken", "XSRF-TOKEN", "__RequestVerificationToken",
+    # CMS
+    "wordpress_test_cookie", "wp-settings-*", "wordpress_logged_in_*",
+    # consent state
+    "CookieConsent", "OptanonConsent", "OptanonAlertBoxClosed",
+    "cookieyes-consent", "cmplz_*", "wpconsent*", "cookielawinfo-*",
+    "moove_gdpr_popup",
+)
+
 # --- Cookies that are tracking, not strictly necessary -----------------------
-# Prefix match. Presence of any of these BEFORE consent is the consent gap.
-TRACKING_COOKIE_PREFIXES = (
-    "_ga", "_gid", "_gat", "__utm", "_gcl", "_dc_gtm",      # Google
-    "_fbp", "_fbc", "fr",                                    # Meta
-    "_hjs", "_hj",                                           # Hotjar
-    "_clck", "_clsk", "MUID",                                # Microsoft Clarity
-    "__hstc", "hubspotutk", "__hssrc", "__hssc",             # HubSpot
-    "_lfa", "li_sugr", "bcookie", "lidc", "UserMatchHistory",# LinkedIn
-    "IDE", "test_cookie", "NID", "DSID",                     # DoubleClick
+# Presence of any of these BEFORE consent is the consent gap.
+#
+# Short or generic names match only exactly AND on the vendor's own domain. As
+# prefixes they caught unrelated cookies -- 'fr' matched any first-party name
+# starting with "fr" -- and a first-party NID or MUID is not Google's or
+# Microsoft's. name -> (category, vendor domains)
+VENDOR_EXACT_COOKIES = {
+    "fr":                 ("advertising", ("facebook.com",)),
+    "IDE":                ("advertising", ("doubleclick.net",)),
+    "test_cookie":        ("advertising", ("doubleclick.net",)),
+    "DSID":               ("advertising", ("doubleclick.net",)),
+    "NID":                ("advertising", ("google.com",)),
+    "MUID":               ("session_replay", ("bing.com", "clarity.ms")),
+    # Microsoft Clarity / Bing, set alongside MUID by the Clarity tag
+    "MR":                 ("session_replay", ("bing.com", "clarity.ms")),
+    "CLID":               ("session_replay", ("bing.com", "clarity.ms")),
+    "SM":                 ("session_replay", ("bing.com", "clarity.ms")),
+    "ANONCHK":            ("session_replay", ("bing.com", "clarity.ms")),
+    "SRM_B":              ("advertising", ("bing.com", "clarity.ms")),
+    "YSC":                ("advertising", ("youtube.com",)),
+    "VISITOR_INFO1_LIVE": ("advertising", ("youtube.com",)),
+    "VISITOR_PRIVACY_METADATA": ("advertising", ("youtube.com",)),
+    "__Secure-YNID":      ("advertising", ("youtube.com",)),
+    "__Secure-ROLLOUT_TOKEN": ("advertising", ("youtube.com",)),
+    "bcookie":            ("advertising", ("linkedin.com",)),
+    "bscookie":           ("advertising", ("linkedin.com",)),
+    "lidc":               ("advertising", ("linkedin.com",)),
+    "UserMatchHistory":   ("advertising", ("linkedin.com",)),
+    "AnalyticsSyncHistory": ("advertising", ("linkedin.com",)),
+    "li_sugr":            ("advertising", ("linkedin.com",)),
+}
+
+# Genuine prefixes, distinctive enough to match on any domain.
+ADVERTISING_COOKIE_PREFIXES = ("_fbp", "_fbc", "_gcl", "_uetsid", "_uetvid")
+SESSION_REPLAY_COOKIE_PREFIXES = ("_hj", "_hjs", "_clck", "_clsk")
+ANALYTICS_COOKIE_PREFIXES = (
+    "_ga", "_gid", "_gat", "__utm", "_dc_gtm",               # Google
+    "__hstc", "__hssrc", "__hssc", "hubspotutk",             # HubSpot
+    "_lfa",                                                  # LinkedIn (Leadfeeder)
     "mp_", "ajs_", "amplitude_",                             # product analytics
-    "_pk_", "_omappvp", "_uetsid", "_uetvid",                # Matomo/Bing
-    "YSC", "VISITOR_INFO1_LIVE",                             # YouTube embeds
+    "_pk_", "_omappvp",                                      # Matomo / OptinMonster
 )
 
 # --- Tech stack --------------------------------------------------------------
@@ -192,16 +250,6 @@ def detect_privacy_policy(blob):
     return any(re.search(p, low) for p in PRIVACY_LINK_PATTERNS)
 
 
-def tracking_cookies(cookies):
-    """Names of tracking (non-essential) cookies among those given."""
-    out = []
-    for c in cookies:
-        name = c.get("name", "")
-        if any(name.startswith(p) for p in TRACKING_COOKIE_PREFIXES):
-            out.append(name)
-    return sorted(set(out))
-
-
 def detect_tech(blob):
     """The whole tech-stack picture in one pass over the page blob."""
     return {
@@ -211,72 +259,6 @@ def detect_tech(blob):
         "tech_analytics_tools": _match_all(blob, ANALYTICS_SIGNATURES),
         "tech_marketing_tools": _match_all(blob, MARKETING_SIGNATURES),
     }
-
-
-# --- Cookie categories, for consent-gap scoring ------------------------------
-# Not all pre-consent cookies are equally damning. Advertising and session-replay
-# trackers are the ones that make a DPDP complaint concrete: they identify a
-# person across sites, or record what they did on the page, before anyone agreed
-# to anything. Plain analytics is a lighter finding.
-ADVERTISING_COOKIE_PREFIXES = (
-    "_fbp", "_fbc", "fr", "IDE", "test_cookie", "NID", "DSID",
-    "_gcl", "li_sugr", "bcookie", "lidc", "UserMatchHistory",
-    "_uetsid", "_uetvid", "YSC", "VISITOR_INFO1_LIVE",
-)
-SESSION_REPLAY_COOKIE_PREFIXES = ("_hj", "_hjs", "_clck", "_clsk", "MUID")
-
-
-def categorise_cookies(names):
-    """Splits tracking cookie names into advertising / session-replay / analytics."""
-    advertising, replay, analytics = [], [], []
-    for name in names:
-        if any(name.startswith(p) for p in ADVERTISING_COOKIE_PREFIXES):
-            advertising.append(name)
-        elif any(name.startswith(p) for p in SESSION_REPLAY_COOKIE_PREFIXES):
-            replay.append(name)
-        else:
-            analytics.append(name)
-    return {"advertising": advertising, "session_replay": replay, "analytics": analytics}
-
-
-def consent_gap_score(has_cmp, tracking, banner, policy):
-    """
-    0-100, deterministic. Answers "how much of a consent problem does this site
-    actually have", which is a different question from has_cmp.
-
-    A site with no CMP but also no trackers scores 0: there is no gap to close,
-    nothing to sell against, and no reason to spend an Apify or Apollo credit on
-    it. That is the whole point of the score -- has_cmp=false alone lets those
-    through, and on the first real batch they were 3 of 4 "leads".
-
-    Scoring is additive and capped:
-      trackers present   up to 45  (count, weighted by how invasive the category is)
-      no cookie banner        25   (nothing even pretends to ask)
-      no privacy policy       15   (no disclosure at all)
-      session replay          10   (recording behaviour pre-consent)
-      advertising present      5   (cross-site identification pre-consent)
-    """
-    if has_cmp or not tracking:
-        return 0
-
-    cats = categorise_cookies(tracking)
-    weighted = (
-        3.0 * len(cats["advertising"])
-        + 3.0 * len(cats["session_replay"])
-        + 1.5 * len(cats["analytics"])
-    )
-    score = min(45.0, weighted)
-
-    if not banner:
-        score += 25
-    if not policy:
-        score += 15
-    if cats["session_replay"]:
-        score += 10
-    if cats["advertising"]:
-        score += 5
-
-    return int(min(100, round(score)))
 
 
 # --- Parked / placeholder pages ----------------------------------------------
@@ -355,7 +337,7 @@ def cookie_record(cookie, site_domain, now=None):
     third_party = registrable(domain) != registrable(site_domain) if site_domain else False
 
     name = cookie.get("name", "")
-    category = _cookie_category(name, third_party)
+    category = cookie_category(name, domain, third_party)
 
     return {
         "name": name,
@@ -370,25 +352,41 @@ def cookie_record(cookie, site_domain, now=None):
     }
 
 
-def _cookie_category(name, third_party):
-    """
-    advertising / session_replay / analytics / third_party / functional.
+def _is_necessary(name):
+    return any(name.startswith(entry[:-1]) if entry.endswith("*") else name == entry
+               for entry in NECESSARY_COOKIES)
 
-    Name matching alone made unknown trackers invisible -- a real page set CLID,
-    MUID, MR, SRM_B and ANONCHK (Clarity and Bing advertising) that no prefix
-    list caught. So party is used as a backstop: a third-party cookie set before
-    anyone consented is a tracker whether or not we recognise its name.
+
+def _on_domain(domain, vendors):
+    domain = (domain or "").lstrip(".").lower()
+    return any(domain == v or domain.endswith("." + v) for v in vendors)
+
+
+def cookie_category(name, domain, third_party):
     """
+    necessary / advertising / session_replay / analytics / unclassified /
+    functional, first match wins.
+
+    An unrecognised third-party cookie is 'unclassified', not a tracker. The old
+    backstop counted every such cookie as tracking, which put reCAPTCHA and
+    Cloudflare cookies into findings; an unknown name is not evidence either way.
+    """
+    if _is_necessary(name):
+        return "necessary"
+    if name in VENDOR_EXACT_COOKIES:
+        category, vendors = VENDOR_EXACT_COOKIES[name]
+        if _on_domain(domain, vendors):
+            return category
     if any(name.startswith(p) for p in ADVERTISING_COOKIE_PREFIXES):
         return "advertising"
     if any(name.startswith(p) for p in SESSION_REPLAY_COOKIE_PREFIXES):
         return "session_replay"
-    if any(name.startswith(p) for p in TRACKING_COOKIE_PREFIXES):
+    if any(name.startswith(p) for p in ANALYTICS_COOKIE_PREFIXES):
         return "analytics"
-    return "third_party" if third_party else "functional"
+    return "unclassified" if third_party else "functional"
 
 
-TRACKING_CATEGORIES = ("advertising", "session_replay", "analytics", "third_party")
+TRACKING_CATEGORIES = ("advertising", "session_replay", "analytics")
 
 
 def analyse_cookies(cookies, site_domain):
@@ -396,9 +394,20 @@ def analyse_cookies(cookies, site_domain):
     Every cookie set before consent, classified. Returns the records plus the
     counts the export and the score are built from.
     """
-    records = [cookie_record(c, site_domain) for c in cookies]
+    return summarise_records([cookie_record(c, site_domain) for c in cookies])
+
+
+def summarise_records(records):
+    """
+    The counts the export and the score are built from, given classified cookie
+    records. Separate from analyse_cookies() so stored records can be
+    re-summarised without a rescan.
+
+    Only TRACKING cookies count toward third parties and lifetimes: a necessary
+    or unclassified cookie on google.com is not data sent to a tracker.
+    """
     tracking = [r for r in records if r["category"] in TRACKING_CATEGORIES]
-    third_party_domains = sorted({r["domain"] for r in records if r["party"] == "third"})
+    third_party_domains = sorted({r["domain"] for r in tracking if r["party"] == "third"})
     lifetimes = [r["lifetime_days"] for r in tracking if r["lifetime_days"]]
 
     return {
@@ -441,9 +450,9 @@ def is_severe_score(score):
 
 def gap_score(has_cmp, analysis, banner, policy):
     """
-    0-100 from the full cookie picture. Supersedes consent_gap_score(), which
-    only ever saw a list of names and so undercounted -- on a real page it
-    scored 13 of 24 cookies and missed an entire advertising cluster.
+    0-100 from the full cookie picture. Supersedes an earlier name-list score
+    that undercounted -- on a real page it scored 13 of 24 cookies and missed
+    an entire advertising cluster.
 
       trackers, weighted by category      up to 40
       distinct third-party domains        up to 15  (3 each)
@@ -460,7 +469,6 @@ def gap_score(has_cmp, analysis, banner, policy):
     weighted = (
         3.0 * len(cats["advertising"])
         + 3.0 * len(cats["session_replay"])
-        + 2.0 * len(cats["third_party"])
         + 1.5 * len(cats["analytics"])
     )
     score = min(40.0, weighted)

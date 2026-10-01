@@ -1,0 +1,24 @@
+[
+ {
+  "cin": "U70109GJ2004PTC118154",
+  "company_name": "SHUBH REALTY (SOUTH) PRIVATE LIMITED",
+  "website": "popt.ai",
+  "old_score": 5,
+  "has_cmp": false,
+  "cmp_name": null,
+  "has_cookie_banner": false,
+  "consent_gap_score": 5,
+  "consent_gap_summary": "No consent management platform detected; 5 of 6 cookies are tracking cookies set before consent: YSC, VISITOR_INFO1_LIVE, VISITOR_PRIVACY_METADATA, __Secure-YNID, __Secure-ROLLOUT_TOKEN; data sent to 1 third-party domains before consent: youtube.com; longest tracker lifetime 179 days; no cookie banner; no privacy policy linked; collects personal data via 1 web form(s) (email, name, phone) with no consent checkbox and no privacy link on the form."
+ },
+ {
+  "cin": "U70200GJ2025PTC165435",
+  "company_name": "ENVIROWEALTH SERVICES PRIVATE LIMITED",
+  "website": "envirowealth.in",
+  "old_score": 45,
+  "has_cmp": false,
+  "cmp_name": null,
+  "has_cookie_banner": true,
+  "consent_gap_score": 100,
+  "consent_gap_summary": "No consent management platform detected; no tracking cookies set before consent; cookie banner present; privacy/cookie policy linked."
+ }
+]

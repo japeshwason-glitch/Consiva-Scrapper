@@ -8,6 +8,7 @@ has to be reproducible and auditable rather than probabilistic.
 """
 
 import re
+from urllib.parse import urlparse
 
 # --- Consent management platforms -------------------------------------------
 # Matched against script src URLs and raw HTML. Order matters only for
@@ -237,6 +238,107 @@ def detect_cmp(blob):
     return _match(blob, CMP_SIGNATURES)
 
 
+# The name sales and customers see for each CMP. The labels above are internal
+# keys -- "(WP)" marks a WordPress plugin for us -- and must never reach a CRM
+# finding or a report. Mirrors report_catalogue.yaml `cmp_names`, which the
+# PDF reads; a test fails if the two ever differ. Kept here because the
+# pipeline image builds the CRM ConsentFinding and has no YAML reader.
+CMP_DISPLAY_NAMES = {
+    "OneTrust": "OneTrust",
+    "Cookiebot": "Cookiebot",
+    "CookieYes": "CookieYes",
+    "Osano": "Osano",
+    "Termly": "Termly",
+    "Quantcast": "Quantcast Choice",
+    "Didomi": "Didomi",
+    "Usercentrics": "Usercentrics",
+    "iubenda": "iubenda",
+    "Complianz": "Complianz",
+    "CookieScript": "CookieScript",
+    "Borlabs": "Borlabs Cookie",
+    "TrustArc": "TrustArc",
+    "Seers": "Seers",
+    "Secure Privacy": "Secure Privacy",
+    "CookiePro": "CookiePro",
+    "Ketch": "Ketch",
+    "Klaro": "Klaro",
+    "tarteaucitron": "tarteaucitron.js",
+    "Civic Cookie Control": "Civic Cookie Control",
+    "GDPR Cookie Consent (WP)": "GDPR Cookie Consent",
+    "Moove GDPR (WP)": "Moove GDPR Consent",
+    "WPConsent (WP)": "WPConsent",
+}
+
+
+def cmp_display_name(name):
+    """Customer-facing name for a detected CMP (None stays None)."""
+    return CMP_DISPLAY_NAMES.get(name, name) if name else name
+
+
+# --- CMP evidence (report mode) ---------------------------------------------
+# detect_cmp() matches anywhere in the page, so a blog post that merely names
+# OneTrust counts. Reports need to know HOW the CMP was seen before claiming a
+# consent tool "is installed": its script loaded from the vendor's host, or
+# its banner element / JS global is live in the page. Markers are '#id',
+# '.class' or 'window.Global'; only well-known ones are listed -- a vendor
+# without markers falls back to script_src or text.
+CMP_DOM_MARKERS = {
+    "OneTrust":       ("#onetrust-consent-sdk", "#onetrust-banner-sdk", "window.OneTrust"),
+    "Cookiebot":      ("#CybotCookiebotDialog", "window.Cookiebot"),
+    "CookieYes":      (".cky-consent-container", ".cky-banner-element"),
+    "Osano":          (".osano-cm-window", "window.Osano"),
+    "Termly":         ("#termly-code-snippet-support",),
+    "Quantcast":      ("#qc-cmp2-container",),
+    "Didomi":         ("#didomi-host", "window.Didomi"),
+    "Usercentrics":   ("#usercentrics-root", "window.UC_UI"),
+    "iubenda":        ("#iubenda-cs-banner", "window._iub"),
+    "Complianz":      ("#cmplz-cookiebanner-container", ".cmplz-cookiebanner"),
+    "CookieScript":   ("#cookiescript_injected", "window.CookieScript"),
+    "Borlabs":        ("#BorlabsCookieBox", "window.BorlabsCookie"),
+    "TrustArc":       ("#truste-consent-track", "#consent_blackbar", "window.truste"),
+    "CookiePro":      ("#onetrust-consent-sdk", "window.OneTrust"),
+    "Ketch":          ("#lanyard_root", "window.ketch"),
+    "Klaro":          ("#klaro", "window.klaro"),
+    "tarteaucitron":  ("#tarteaucitronRoot", "window.tarteaucitron"),
+    "Civic Cookie Control": ("#ccc", "window.CookieControl"),
+    "GDPR Cookie Consent (WP)": ("#cookie-law-info-bar", "#cliSettingsPopup"),
+    "Moove GDPR (WP)": ("#moove_gdpr_cookie_info_bar",),
+    "WPConsent (WP)": ("#wpconsent-container",),
+}
+
+# Runs in the page: which of the markers above are present. Takes the list of
+# markers, returns the ones found.
+CMP_DOM_JS = r"""
+markers => markers.filter(m => {
+  try {
+    if (m.startsWith('window.')) return typeof window[m.slice(7)] !== 'undefined';
+    return document.querySelector(m) !== null;
+  } catch (e) { return false; }
+})
+"""
+
+
+def all_cmp_dom_markers():
+    return sorted({m for ms in CMP_DOM_MARKERS.values() for m in ms})
+
+
+def cmp_evidence(cmp_name, script_srcs, dom_hits):
+    """
+    'script_src' if one of the CMP's tokens is in the HOST of a loaded script,
+    'dom' if one of its markers is live in the page, else 'text' (seen only in
+    the page source). None when no CMP was detected.
+    """
+    if not cmp_name:
+        return None
+    tokens = next(toks for name, toks in CMP_SIGNATURES if name == cmp_name)
+    hosts = [urlparse(s).netloc.lower() for s in script_srcs or []]
+    if any(t.lower() in h for t in tokens for h in hosts):
+        return "script_src"
+    if set(CMP_DOM_MARKERS.get(cmp_name, ())) & set(dom_hits or []):
+        return "dom"
+    return "text"
+
+
 def detect_banner(blob):
     """True if a cookie banner appears present, even without a recognised vendor."""
     low = blob.lower()
@@ -387,6 +489,58 @@ def cookie_category(name, domain, third_party):
 
 
 TRACKING_CATEGORIES = ("advertising", "session_replay", "analytics")
+
+# --- cookie vendor labels (report mode) --------------------------------------
+# Who a tracking cookie belongs to, for "cookies set on page load: Google
+# Analytics (_ga, _gid), Meta Pixel (_fbp)". Only tracking cookies get one.
+# These are internal keys; the name a report prints for each comes from
+# report_catalogue.yaml `vendor_names` (YouTube -> "YouTube (embedded video)").
+# Exact names: a label, or {vendor domain: label} when one name has two owners.
+VENDOR_BY_EXACT = {
+    "fr": "Meta Pixel",
+    "IDE": "Google Ads", "test_cookie": "Google Ads", "DSID": "Google Ads",
+    "NID": "Google",
+    "MUID": {"clarity.ms": "Microsoft Clarity", "bing.com": "Microsoft Advertising"},
+    "MR": {"clarity.ms": "Microsoft Clarity", "bing.com": "Microsoft Advertising"},
+    "CLID": {"clarity.ms": "Microsoft Clarity", "bing.com": "Microsoft Advertising"},
+    "SM": {"clarity.ms": "Microsoft Clarity", "bing.com": "Microsoft Advertising"},
+    "ANONCHK": {"clarity.ms": "Microsoft Clarity", "bing.com": "Microsoft Advertising"},
+    "SRM_B": "Microsoft Advertising",
+    "YSC": "YouTube", "VISITOR_INFO1_LIVE": "YouTube",
+    "VISITOR_PRIVACY_METADATA": "YouTube", "__Secure-YNID": "YouTube",
+    "__Secure-ROLLOUT_TOKEN": "YouTube",
+    "bcookie": "LinkedIn", "bscookie": "LinkedIn", "lidc": "LinkedIn",
+    "UserMatchHistory": "LinkedIn", "AnalyticsSyncHistory": "LinkedIn",
+    "li_sugr": "LinkedIn",
+}
+VENDOR_BY_PREFIX = (
+    (("_ga", "_gid", "_gat", "__utm", "_dc_gtm"), "Google Analytics"),
+    (("_gcl",), "Google Ads"),
+    (("_fbp", "_fbc"), "Meta Pixel"),
+    (("_uetsid", "_uetvid"), "Microsoft Advertising"),
+    (("_hj",), "Hotjar"),
+    (("_clck", "_clsk"), "Microsoft Clarity"),
+    (("__hstc", "__hssrc", "__hssc", "hubspotutk"), "HubSpot"),
+    (("_lfa",), "Leadfeeder"),
+    (("mp_",), "Mixpanel"),
+    (("ajs_",), "Segment"),
+    (("amplitude_",), "Amplitude"),
+    (("_pk_",), "Matomo"),
+    (("_omappvp",), "OptinMonster"),
+)
+
+
+def cookie_vendor(name, domain, category):
+    """Vendor label for a tracking cookie; None for anything not tracking."""
+    if category not in TRACKING_CATEGORIES:
+        return None
+    label = VENDOR_BY_EXACT.get(name)
+    if isinstance(label, dict):
+        return next((v for d, v in label.items() if _on_domain(domain, (d,))), "Other")
+    if label:
+        return label
+    return next((v for prefixes, v in VENDOR_BY_PREFIX
+                 if any(name.startswith(p) for p in prefixes)), "Other")
 
 
 def analyse_cookies(cookies, site_domain):
@@ -609,7 +763,10 @@ def form_gap(forms):
     }
 
 
-def consent_score(has_cmp, analysis, banner, policy, forms=None):
+REAL_CMP_EVIDENCE = ("script_src", "dom")
+
+
+def consent_score(has_cmp, analysis, banner, policy, forms=None, cmp_evidence=None):
     """
     0-100 where 0 is the MOST SEVERE gap and 100 is perfectly aligned.
 
@@ -635,10 +792,25 @@ def consent_score(has_cmp, analysis, banner, policy, forms=None):
       collects identifying data, no consent checkbox   25
       collects identifying data, no privacy link       10
       posts to a third-party host                      10
+
+    A CMP earns 100 only when it is really installed AND no tracking cookie
+    fires (decided 2026-10-06). cmp_evidence (from cmp_evidence()):
+      script_src / dom, no trackers  -> 100: a working consent tool
+      script_src / dom, trackers     -> scored like any site: the tool is
+                                        there, but cookies still fire first
+      text                           -> no CMP: the name is only in the page
+      None (not measured)            -> any CMP scores 100, the rule before
+                                        evidence existed; for stored rows
+                                        re-scored offline without a page load
     """
-    base = gap_score(has_cmp, analysis, banner, policy)
-    if has_cmp:
-        return ALIGNED  # they already run a CMP; not a lead
+    if cmp_evidence is None:
+        counts_as_cmp = has_cmp
+    else:
+        counts_as_cmp = (has_cmp and cmp_evidence in REAL_CMP_EVIDENCE
+                         and not analysis["tracking"])
+    if counts_as_cmp:
+        return ALIGNED  # a working CMP and nothing firing: not a lead
+    base = gap_score(False, analysis, banner, policy)
 
     form = forms or {}
     if not form.get("has_data_form"):

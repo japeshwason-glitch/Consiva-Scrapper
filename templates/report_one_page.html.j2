@@ -1,0 +1,128 @@
+<!doctype html>
+{#- Consiva one-page DPDP Consent Readiness Report.
+    Rendered by report_build.py with Jinja2 autoescape ON, then printed by Chromium page.pdf(format="A4", print_background=True).
+    Every value is plain text from the scan or the catalogue; nothing is marked |safe.
+    Context:
+      font_css           str   @font-face rules for IBM Plex Sans / Mono (base64 woff2), built by report_build.py
+      logo_data_uri      str   data:image/png;base64,... of assets/consiva-nav-logo.png
+      domain             str   bare lowercase host, e.g. "example.co.in" -- the only name on the report
+      scan_date          str   e.g. "2 October 2026"
+      score              int   0-100
+      band               str   "priority" | "attention"
+      band_label         str   "Needs priority attention" | "Needs attention"
+      score_line         str   e.g. "4 gaps found · 1 point to review"  (wording from report_catalogue.yaml)
+      review_label       str   heading over the review rows               (wording from report_catalogue.yaml)
+      note               str   advice line under the gaps table, or ""    (wording from report_catalogue.yaml)
+      summary            str   gap summary sentences
+      gaps               list  [{title, observed, cookie_groups: [{vendor, names: [..], more_text}] | None, sections, requirement}]  max 4
+                               names print in mono; more_text ("and 2 more") prints in the body font
+      cookie_list        dict  lead_in, vendor_sep, name_sep, more_sep, group_sep   (from report_catalogue.yaml)
+                               -> "Vendor: name, name and 2 more; Vendor: name"
+      reviews            list  same shape, max 1
+      helps              list  [{title, text}]  6 items
+      sales_contact      str   e.g. "Sales Team · sales@consiva.ai"
+-#}
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DPDP Consent Readiness Report · {{ domain }}</title>
+<style>
+{{ font_css }}
+@page { size: A4; margin: 0; }
+html, body { margin: 0; padding: 0; }
+body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.page { width: 794px; height: 1123px; box-sizing: border-box; padding: 52px 56px 40px; background: #ffffff; color: #1a1d24; font-family: 'IBM Plex Sans', 'Helvetica Neue', sans-serif; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+.mono { font-family: 'IBM Plex Mono', monospace; font-size: 12px; }
+.label { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; color: #4338ca; }
+.grid { display: grid; grid-template-columns: 1.2fr 1.8fr 0.7fr 1.4fr; column-gap: 12px; padding: 7px 14px; font-size: 13px; line-height: 1.4; }
+.band-priority { color: #8a3f06; background: #fbeee4; }
+.band-attention { color: #7a5200; background: #fdf3dc; }
+.score-priority { color: #b4540a; }
+.score-attention { color: #a06b00; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div style="margin: -52px -56px 0; padding: 22px 56px 20px; background: #111735; display: flex; justify-content: space-between; align-items: center; gap: 24px">
+    <img src="{{ logo_data_uri }}" alt="Consiva.ai" style="height: 50px; width: auto; display: block">
+    <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-end; font-size: 13px; line-height: 1.4; color: #c7cbe8">
+      <div style="font-size: 17px; font-weight: 600; color: #ffffff">DPDP Consent Readiness Report</div>
+      <div style="font-size: 12px; letter-spacing: 0.06em; color: #a5abe0; margin-top: 4px">SPECIALLY PREPARED FOR</div>
+      <div style="font-size: 25px; font-weight: 700; line-height: 1.2; color: #ffffff; text-align: right; overflow-wrap: anywhere">{{ domain }}</div>
+      <div>Scanned {{ scan_date }}</div>
+    </div>
+  </div>
+
+  <div style="display: flex; align-items: center; gap: 20px; padding: 10px 18px; border: 1px solid #d9dce1; border-radius: 8px">
+    <div style="display: flex; align-items: baseline; gap: 4px">
+      <div class="score-{{ band }}" style="font-size: 44px; font-weight: 700; line-height: 1">{{ score }}</div>
+      <div style="font-size: 16px; color: #4a505c">/ 100</div>
+    </div>
+    <div style="display: flex; flex-direction: column; gap: 6px; flex-grow: 1">
+      <div style="display: flex; align-items: center; gap: 10px">
+        <div style="font-size: 12px; font-weight: 600; letter-spacing: 0.08em; color: #4a505c">CONSIVA CONSENT READINESS SCORE</div>
+        <div class="band-{{ band }}" style="font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px">{{ band_label }}</div>
+      </div>
+      <div style="font-size: 14px">
+        {{ score_line }}
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div class="label">GAP SUMMARY</div>
+    <div style="font-size: 16px; line-height: 1.5">{{ summary }}</div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div class="label">GAPS AGAINST DPDP ACT SECTIONS</div>
+    <div style="border: 1px solid #c7ccd3; border-radius: 8px; overflow: hidden">
+      <div class="grid" style="background: #eef0fe; font-size: 12px; font-weight: 600; color: #312e81">
+        <div>Gap</div><div>What we observed</div><div>DPDP section</div><div>What the section requires</div>
+      </div>
+      {% for g in gaps %}
+      <div class="grid" style="border-top: 1px solid #d9dce1">
+        <div style="font-weight: 600">{{ g.title }}</div>
+        <div>{{ g.observed }}{% if g.cookie_groups %}{{ cookie_list.lead_in }}{% for grp in g.cookie_groups %}{{ grp.vendor }}{{ cookie_list.vendor_sep }}{% for n in grp.names %}<span class="mono">{{ n }}</span>{{ cookie_list.name_sep if not loop.last }}{% endfor %}{% if grp.more_text %}{{ cookie_list.more_sep }}{{ grp.more_text }}{% endif %}{{ cookie_list.group_sep if not loop.last }}{% endfor %}{% endif %}</div>
+        <div style="font-weight: 600">{{ g.sections }}</div>
+        <div style="color: #3a404b">{{ g.requirement }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if note %}<div style="font-size: 12px; line-height: 1.45; color: #4a505c">{{ note }}</div>{% endif %}
+  </div>
+
+  {% if reviews %}
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <div class="label" style="color: #4a505c">{{ review_label }}</div>
+    {% for r in reviews %}
+    <div class="grid" style="border: 1px dashed #b8bec7; border-radius: 8px; color: #3a404b">
+      <div style="font-weight: 600; color: #1a1d24">{{ r.title }}</div>
+      <div>{{ r.observed }}</div>
+      <div style="font-weight: 600; color: #1a1d24">{{ r.sections }}</div>
+      <div>{{ r.requirement }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <div style="display: flex; flex-direction: column; gap: 10px; padding: 10px 18px 10px; background: #eef0fe; border-radius: 8px">
+    <div class="label">HOW CONSIVA HELPS CLOSE THESE GAPS</div>
+    <ul style="margin: 0; padding: 0 0 0 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; row-gap: 6px; font-size: 13px; line-height: 1.4">
+      {% for h in helps %}<li><span style="font-weight: 600">{{ h.title }}.</span> {{ h.text }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <div style="margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px solid #d9dce1; font-size: 12px; line-height: 1.45; color: #4a505c">
+    <div>Automated scan of the public homepage of {{ domain }} on {{ scan_date }}, without any interaction; it reflects only what was visible from outside. References are to the Digital Personal Data Protection Act, 2023. For information only; not legal advice.</div>
+    <div style="display: flex; justify-content: space-between; color: #1a1d24">
+      <div>Questions about this report: {{ sales_contact }}</div>
+      <div style="font-weight: 600; color: #4338ca">consiva.ai</div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>

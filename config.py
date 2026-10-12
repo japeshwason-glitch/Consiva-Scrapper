@@ -60,7 +60,20 @@ CRM_LEADS_TABLE = os.environ.get("CRM_LEADS_TABLE", "crm.CrmLeads")
 # when unset, so a single-database setup needs no extra variable.
 CRM_LEADS_DB_NAME = os.environ.get("CRM_LEADS_DB_NAME") or CRM_DB_NAME
 
-APOLLO_ALLOW_EMAIL_REVEAL = os.environ.get("APOLLO_ALLOW_EMAIL_REVEAL", "0") not in ("0", "false", "False", "")
+# One-page DPDP reports (report_build.py, docs/REPORTS.md). PDFs go to a
+# Cloudflare R2 bucket served on REPORT_PUBLIC_BASE_URL, where the URL path
+# equals the object key.
+R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
+R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY")
+R2_REPORTS_BUCKET = os.environ.get("R2_REPORTS_BUCKET", "consiva-reports")
+R2_ENDPOINT = (f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+               if R2_ACCOUNT_ID else None)
+REPORT_PUBLIC_BASE_URL = (os.environ.get("REPORT_PUBLIC_BASE_URL")
+                          or "https://reports-consiva.gignati.com").rstrip("/")
+REPORT_SALES_CONTACT = os.environ.get("REPORT_SALES_CONTACT", "")
+
+APOLLO_ALLOW_EMAIL_REVEAL =os.environ.get("APOLLO_ALLOW_EMAIL_REVEAL", "0") not in ("0", "false", "False", "")
 
 # Local llama.cpp server used for soft-field extraction in stage 03.
 # Self-hosted on the LAN: no company data leaves the network, and inference is

@@ -1,0 +1,17 @@
+# Image for the one-page DPDP report job (report_build.py) only.
+#
+# Separate from the pipeline image on purpose: building it never rebuilds or
+# restarts the scheduler or the API. The code is NOT copied in -- compose
+# mounts the repo at /app -- so this image only carries dependencies and a
+# code change needs no rebuild.
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
+
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-reports.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-reports.txt
+
+ENV PYTHONUNBUFFERED=1
+CMD ["python", "report_build.py", "--help"]

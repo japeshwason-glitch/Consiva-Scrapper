@@ -1,0 +1,3 @@
+# Auto Email Campaign (campaign/) -- installed on top of requirements.txt and
+# requirements-reports.txt into the campaign image (Dockerfile.campaign).
+dnspython==2.7.0

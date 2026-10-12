@@ -221,7 +221,7 @@ def build_consent_summary(cmp_name, analysis, banner, policy, form_gap=None, emb
     recipients and cookie lifetimes are the concrete part, far more than a count.
     """
     parts = []
-    parts.append(f"CMP detected: {cmp_name}" if cmp_name
+    parts.append(f"CMP detected: {fingerprints.cmp_display_name(cmp_name)}" if cmp_name
                  else "No consent management platform detected")
 
     n = analysis["tracking_count"]
@@ -259,10 +259,13 @@ def build_consent_summary(cmp_name, analysis, banner, policy, form_gap=None, emb
     return "; ".join(parts) + "."
 
 
-async def load(context, url, wait=SETTLE_MS):
-    """Navigate and return (page, html, extracted). Caller closes the page."""
+async def load(context, url, wait=SETTLE_MS, with_status=False):
+    """
+    Navigate and return (page, html, extracted) -- plus the main response's
+    HTTP status as a fourth item when with_status. Caller closes the page.
+    """
     page = await context.new_page()
-    await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
+    response = await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
     try:
         await page.wait_for_load_state("networkidle", timeout=NETWORK_IDLE_TIMEOUT_MS)
     except Exception:
@@ -270,28 +273,65 @@ async def load(context, url, wait=SETTLE_MS):
     await page.wait_for_timeout(wait)
     html = await page.content()
     data = await page.evaluate(EXTRACT_JS)
+    if with_status:
+        return page, html, data, (response.status if response else None)
     return page, html, data
 
 
-async def scrape_one(browser, company, use_llm):
+def homepage_urls(domain, www_fallback=False):
+    """
+    The URLs tried for a homepage, in order: https, then http. With
+    www_fallback, then https://www. and http://www. too -- some sites
+    (bisleri.com, biba.in) only answer on www, and the bare domain does not
+    even resolve.
+    """
+    urls = [f"https://{domain}", f"http://{domain}"]
+    if www_fallback and not domain.startswith("www."):
+        urls += [f"https://www.{domain}", f"http://www.{domain}"]
+    return urls
+
+
+async def scrape_one(browser, company, use_llm, report_mode=False):
     """
     Everything for one company in one browser context. The context is fresh and
     nothing is ever clicked, so whatever cookies exist afterwards were set
     without consent -- that is the measurement.
+
+    report_mode=True is for the one-page DPDP reports (report_build.py) and
+    changes nothing on the default path. It loads the homepage only -- no
+    subpages, no model -- and adds: http_status; scan_status 'ok' or
+    'unscannable' (HTTP >= 400, a bot wall, or a parked page) with
+    unscannable_reason; a vendor label on every cookie record;
+    form_privacy_link; third_party_tracking_domains. If the bare domain does
+    not load at all, it also tries www. (homepage_urls).
+
+    cmp_evidence (script_src / dom / text) is measured on every path: the
+    GapScore treats a CMP seen only in page text as no CMP, and scores a real
+    one normally while tracking cookies still fire.
     """
     domain = company["resolved_domain"]
     name = company["company_name"]
-    url = f"https://{domain}"
 
     context = await browser.new_context(
         user_agent=USER_AGENT, viewport={"width": 1366, "height": 900},
         ignore_https_errors=True, locale="en-IN",
     )
     try:
-        try:
-            page, html, data = await load(context, url)
-        except Exception:
-            page, html, data = await load(context, f"http://{domain}")
+        loaded = None
+        for attempt_url in homepage_urls(domain, www_fallback=report_mode):
+            try:
+                loaded = await load(context, attempt_url, with_status=report_mode)
+                break
+            except Exception as exc:
+                load_error = exc
+        if loaded is None:
+            raise load_error            # the last URL's error, as before
+        page, html, data = loaded[:3]
+        http_status = loaded[3] if report_mode else None
+        # Which known CMP banner elements / globals are live -- the GapScore
+        # depends on whether a detected CMP is really installed.
+        cmp_dom_hits = await page.evaluate(fingerprints.CMP_DOM_JS,
+                                           fingerprints.all_cmp_dom_markers())
 
         final_url = page.url
         title = await page.title()
@@ -318,6 +358,7 @@ async def scrape_one(browser, company, use_llm):
         policy = fingerprints.detect_privacy_policy(blob)
         tech = fingerprints.detect_tech(blob)
         has_cmp = cmp_name is not None
+        cmp_evidence = fingerprints.cmp_evidence(cmp_name, scripts, cmp_dom_hits)
 
         # Cookies are classified against the domain we actually LANDED on, not
         # the one we requested: sites redirect (ronaldweboffset.com serves from
@@ -328,13 +369,13 @@ async def scrape_one(browser, company, use_llm):
         form_gap = fingerprints.form_gap(forms)
         form_embed = fingerprints.detect_form_embed(blob)
         gap_score = fingerprints.consent_score(
-            has_cmp, analysis, banner, policy, form_gap)
+            has_cmp, analysis, banner, policy, form_gap, cmp_evidence)
 
         result = {
             "cin": company["cin"], "company_name": name, "domain": domain,
             "final_url": final_url,
             "page_title": title,
-            "has_cmp": has_cmp, "cmp_name": cmp_name,
+            "has_cmp": has_cmp, "cmp_name": cmp_name, "cmp_evidence": cmp_evidence,
             "final_domain": final_domain,
             "pre_consent_cookies": analysis["records"],
             "cookies_total": analysis["cookies_total"],
@@ -366,6 +407,26 @@ async def scrape_one(browser, company, use_llm):
             result["footer_phone"] = phone.group(0).strip()
         if footer_text:
             result["footer_address"] = footer_text[:300]
+
+        if report_mode:
+            for r in analysis["records"]:
+                r["vendor"] = fingerprints.cookie_vendor(r["name"], r["domain"], r["category"])
+            if http_status is not None and http_status >= 400:
+                reason = f"homepage returned HTTP {http_status}"
+            elif fingerprints.is_blocked(title, main_text, http_status):
+                reason = "homepage is a bot check or challenge page"
+            elif fingerprints.is_parked(title, main_text, final_domain):
+                reason = "homepage is parked, a placeholder or unfinished"
+            else:
+                reason = None
+            result.update(
+                http_status=http_status,
+                scan_status="unscannable" if reason else "ok",
+                unscannable_reason=reason,
+                form_privacy_link=form_gap["privacy_link"],
+                third_party_tracking_domains=analysis["third_party_domains"],
+            )
+            return result, None   # homepage only: no subpages, no model
 
         # --- subpages -------------------------------------------------------
         subpages = pick_subpages(final_url, data.get("links", []))

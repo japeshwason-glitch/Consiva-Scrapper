@@ -351,6 +351,82 @@ def count_by_status():
         return {r["status"]: r["n"] for r in cur.fetchall()}
 
 
+# --- one-page DPDP reports (report_build.py, migrations/006_reports.sql) ------
+# Their own three tables; nothing here touches `companies`.
+
+def _insert(table, fields):
+    fields = _serialize_json_fields(fields)
+    cols = ", ".join(fields)
+    marks = ", ".join(["%s"] * len(fields))
+    with get_cursor() as cur:
+        cur.execute(f"INSERT INTO {table} ({cols}) VALUES ({marks}) RETURNING id",
+                    list(fields.values()))
+        return cur.fetchone()["id"]
+
+
+def insert_report_scan(**fields):
+    """One report-mode scan of a lead's homepage. Returns its id."""
+    return _insert("report_scans", fields)
+
+
+def insert_report_findings(scan_id, findings, catalogue_version):
+    """findings: [{code, kind, sections, evidence}] from report_findings.evaluate()."""
+    for f in findings:
+        _insert("report_findings", {
+            "scan_id": scan_id, "code": f["code"], "kind": f["kind"],
+            "dpdp_sections": f["sections"], "evidence": f["evidence"],
+            "catalogue_version": catalogue_version})
+
+
+def insert_report(**fields):
+    """
+    One rendered (or failed) report. A newly rendered one supersedes any
+    earlier rendered report for the same lead, so each lead has at most one
+    current report. Returns its id.
+    """
+    report_id = _insert("reports", fields)
+    if fields.get("status") == "rendered":
+        with get_cursor() as cur:
+            cur.execute("""UPDATE reports SET status = 'superseded'
+                           WHERE lead_ref = %s AND id <> %s AND status = 'rendered'""",
+                        (fields["lead_ref"], report_id))
+    return report_id
+
+
+def mark_report_pushed(report_id):
+    with get_cursor() as cur:
+        cur.execute("UPDATE reports SET crm_pushed_at = NOW() WHERE id = %s", (report_id,))
+
+
+def current_reports(template_version, catalogue_version):
+    """
+    {lead_ref: {id, public_url, crm_pushed_at, crm_values}} for leads that
+    already have a rendered report at these versions -- what a resumed run
+    skips, or only re-pushes (URL and the scan's six CRM values) when the CRM
+    write did not land.
+    """
+    with get_cursor() as cur:
+        cur.execute("""SELECT DISTINCT ON (r.lead_ref) r.id, r.lead_ref, r.public_url,
+                              r.crm_pushed_at, s.crm_values
+                       FROM reports r JOIN report_scans s ON s.id = r.scan_id
+                       WHERE r.status = 'rendered' AND r.template_version = %s
+                         AND r.catalogue_version = %s
+                       ORDER BY r.lead_ref, r.generated_at DESC""",
+                    (template_version, catalogue_version))
+        return {r["lead_ref"]: dict(r) for r in cur.fetchall()}
+
+
+def last_report_scans(lead_refs):
+    """{lead_ref: latest report_scans row} -- for ordering and sampling."""
+    if not lead_refs:
+        return {}
+    with get_cursor() as cur:
+        cur.execute("""SELECT DISTINCT ON (lead_ref) * FROM report_scans
+                       WHERE lead_ref = ANY(%s) ORDER BY lead_ref, scanned_at DESC""",
+                    (list(lead_refs),))
+        return {r["lead_ref"]: dict(r) for r in cur.fetchall()}
+
+
 def _serialize_json_fields(fields):
     """
     List/dict values (open roles, cookie names, etc.) are wrapped in psycopg2's

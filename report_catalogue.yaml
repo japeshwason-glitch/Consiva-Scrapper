@@ -1,0 +1,173 @@
+# Findings catalogue for the one-page DPDP Consent Readiness Report.
+#
+# Read by report_findings.py. Every word a report says about a site comes
+# from here or from the scan itself -- no model writes any of it. Changing a
+# title, observed line, section or requirement means bumping `version`: the
+# version is stored on every finding and report, and a report rendered under
+# an older version is regenerated rather than skipped.
+#
+# This file holds EVERY customer-facing string the report fills in; Python
+# only substitutes placeholders (tests/test_reports.py fails if a report word
+# comes from anywhere else). The template keeps only its fixed headings and
+# the footer disclaimer.
+#
+# Placeholders in `observed` are filled by report_findings.py:
+#   {cmp_name} {n} {cookies_word} {k} {domains_word} {domains} {fields}
+# A G1/G5 observed line is followed on the report by the cookies grouped by
+# vendor, e.g. "Google Analytics: _ga, _gid; Meta Pixel: _fbp" (see cookie_list).
+
+version: "2"   # 2: YouTube-only note (2026-10-07)
+
+findings:
+  G5:
+    kind: gap
+    title: A consent tool is installed but tracking cookies are still set before consent
+    observed: "{cmp_name} detected, yet {n} {cookies_word} set on page load:"
+    sections: Sec 6(1)
+    requirement: Consent by a clear affirmative action before processing
+  G1:
+    kind: gap
+    title: Tracking cookies are set before consent
+    observed: "{n} {cookies_word} set on page load:"
+    sections: Sec 4(1), 6(1)
+    requirement: Consent by a clear affirmative action, for a specified purpose
+  G2:
+    kind: gap
+    title: Third-party tracking cookies are set before consent
+    observed: "Cookies set by {k} third-party {domains_word} before any action: {domains}"
+    sections: Sec 6(1), 5(1)
+    requirement: Consent must be informed and specific, and preceded by a notice
+  G3:
+    kind: gap
+    title: No consent notice is shown to visitors
+    observed: No cookie banner or consent prompt found on the homepage
+    sections: Sec 5(1), 6(1)
+    requirement: A notice must accompany or precede every request for consent
+  G4:
+    kind: gap
+    title: No privacy information is published
+    observed: No privacy or cookie policy linked from the homepage
+    sections: Sec 5(1), 8(9)
+    requirement: Notice of data and purpose; a published contact for data questions
+  A2:
+    kind: advisory
+    title: Contact form has no separate consent option
+    observed: "Form collects {fields} with no consent checkbox"
+    sections: Sec 6(1), 7(a)
+    requirement: Consent is needed if form data is used beyond replying, e.g. for marketing
+
+bands:
+  priority: Needs priority attention
+  attention: Needs attention
+
+# The gap summary: opening, then g5 or g1 (+ g2_suffix), then one of the g3/g4
+# sentences. {vendors} is a list joined with list_sep / list_and.
+summary:
+  opening: "We found {N} consent readiness {gaps_word} on the homepage of {domain}."
+  g5: "A consent tool ({cmp_name}) is installed, but {n} tracking {cookies_word} from {vendors} {are_word} still set before the visitor takes any action."
+  g1: "When the page loads, {n} tracking {cookies_word} from {vendors} {are_word} set before the visitor takes any action"
+  g2_suffix: ", including cookies from {k} third-party {domains_word}"
+  g1_end: "."
+  g3_and_g4: "No consent notice is shown, and no privacy information is published on the site."
+  g3_only: "No consent notice is shown to visitors."
+  g4_only: "No privacy information is published on the site."
+
+# The line under the score, and the heading over the review rows.
+score_line:
+  gaps: "{n} {gaps_word} found"
+  reviews: " · {m} {points_word} to review"
+review_label: "POINTS TO REVIEW · DEPEND ON HOW FORM DATA IS USED"
+
+# Cookie lists: names past the limit, and vendors past the limit.
+more_text: "and {n} more"
+# How a G1/G5 observed line lists cookies by vendor:
+#   "<observed> Vendor: name, name, name and N more; Vendor: name, name"
+cookie_list:
+  lead_in: " "        # between the observed line and the first vendor
+  vendor_sep: ": "    # after a vendor name
+  name_sep: ", "      # between cookie names
+  more_sep: " "       # between the last name and "and N more"
+  group_sep: "; "     # between vendors
+# Shown under the gaps table when EVERY tracking cookie on the page comes from
+# an embedded YouTube player -- the finding stands, and this says how to fix it.
+youtube_only_note: "These cookies come from an embedded YouTube player; YouTube's privacy-enhanced (no-cookie) embed avoids them."
+other_vendors: Other vendors
+other_vendors_in_sentence: other vendors
+
+# [singular, plural]
+words:
+  gap: [gap, gaps]
+  cookie: [cookie, cookies]
+  domain: [domain, domains]
+  point: [point, points]
+  is: [is, are]
+list_and: " and "
+list_sep: ", "
+form_fields:
+  name: name
+  email: email
+  phone: phone
+  address: address
+  company: company
+  message: message
+
+# Customer-facing names. Every CMP in fingerprints.CMP_SIGNATURES and every
+# vendor label fingerprints.cookie_vendor() can return must appear here
+# (a test enforces it), so no internal label such as "(WP)" reaches a report.
+cmp_names:
+  OneTrust: OneTrust
+  Cookiebot: Cookiebot
+  CookieYes: CookieYes
+  Osano: Osano
+  Termly: Termly
+  Quantcast: Quantcast Choice
+  Didomi: Didomi
+  Usercentrics: Usercentrics
+  iubenda: iubenda
+  Complianz: Complianz
+  CookieScript: CookieScript
+  Borlabs: Borlabs Cookie
+  TrustArc: TrustArc
+  Seers: Seers
+  Secure Privacy: Secure Privacy
+  CookiePro: CookiePro
+  Ketch: Ketch
+  Klaro: Klaro
+  tarteaucitron: tarteaucitron.js
+  Civic Cookie Control: Civic Cookie Control
+  "GDPR Cookie Consent (WP)": GDPR Cookie Consent
+  "Moove GDPR (WP)": Moove GDPR Consent
+  "WPConsent (WP)": WPConsent
+
+vendor_names:
+  Google Analytics: Google Analytics
+  Google Ads: Google Ads
+  Google: Google
+  Meta Pixel: Meta Pixel
+  Microsoft Clarity: Microsoft Clarity
+  Microsoft Advertising: Microsoft Advertising
+  YouTube: YouTube (embedded video)
+  LinkedIn: LinkedIn
+  Hotjar: Hotjar
+  HubSpot: HubSpot
+  Leadfeeder: Leadfeeder
+  Mixpanel: Mixpanel
+  Segment: Segment
+  Amplitude: Amplitude
+  Matomo: Matomo
+  OptinMonster: OptinMonster
+  Other: Other
+
+helps:
+  - title: Cookie and tracker discovery
+    text: Categorises every cookie and tracker on your site by purpose.
+  - title: DPDP consent banner
+    text: Notice of data and purpose, in English and Indian languages.
+  - title: Provable consent records
+    text: Each consent and withdrawal logged with notice version and time.
+  - title: Easy withdrawal
+    text: Visitors change or withdraw consent as easily as they gave it.
+  - title: Privacy notice and requests
+    text: Publish privacy information; handle data requests in one place.
+  - title: Quick to deploy
+    text: One script tag, WordPress plugin or Shopify app.

@@ -1,0 +1,5 @@
+IBM Plex, SIL Open Font License 1.1 (LICENSE-IBMPlex-OFL.txt).
+Vendored 2026-10-06 from the official IBM/plex GitHub releases:
+  IBMPlexSans-{Regular,Medium,SemiBold,Bold}.woff2  @ibm/plex-sans@1.1.0  ibm-plex-sans.zip  fonts/complete/woff2/
+  IBMPlexMono-{Regular,Medium}.woff2                @ibm/plex-mono@2.5.0  ibm-plex-mono.zip  fonts/complete/woff2/
+Embedded into report PDFs as base64 @font-face rules by report_build.py, so rendering needs no network.

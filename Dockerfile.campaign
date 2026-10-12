@@ -1,0 +1,36 @@
+# Auto Email Campaign scheduler (campaign/). Built on the same Playwright base as the pipeline and
+# the reports image because stages 4-6 scan homepages and render report PDFs in Chromium; on top of
+# that, requirements-campaign.txt (dnspython for the MX check) and supercronic as the scheduler.
+# The code is NOT copied in: compose mounts the repo at /app, so a code change needs no rebuild; only a
+# change to a requirements file does. Building this image touches no other service.
+FROM mcr.microsoft.com/playwright/python:v1.62.0-noble
+
+WORKDIR /app
+
+# tzdata so TZ=Asia/Kolkata is honoured: supercronic reads the container's local time.
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# supercronic: a cron that runs in the foreground and logs to stdout. Pinned, and verified against a
+# SHA-256 recorded when this file was written (taken from the release asset on 2026-10-12; it was not
+# compared with a publisher-signed value).
+ARG TARGETARCH
+ARG SUPERCRONIC_VERSION=v0.2.49
+ARG SUPERCRONIC_SHA256_AMD64=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1
+ARG SUPERCRONIC_SHA256_ARM64=02aa0cb229ba09050cba6638059dadb9eedc2276632ea43d6a57a2f8c1629dd5
+RUN set -eu; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) sha="$SUPERCRONIC_SHA256_AMD64" ;; \
+      arm64) sha="$SUPERCRONIC_SHA256_ARM64" ;; \
+      *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /usr/local/bin/supercronic \
+      "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH:-amd64}"; \
+    echo "${sha}  /usr/local/bin/supercronic" | sha256sum -c -; \
+    chmod +x /usr/local/bin/supercronic
+
+COPY requirements.txt requirements-reports.txt requirements-campaign.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-reports.txt -r requirements-campaign.txt
+
+ENV PYTHONUNBUFFERED=1
+CMD ["supercronic", "/app/campaign/crontab"]

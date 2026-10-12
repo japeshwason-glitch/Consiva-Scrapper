@@ -1,0 +1,17 @@
+{#-
+  PLACEHOLDER WORDING. Not approved by the CEO or the sales team: every sentence in this file is a stand-in
+  for review. Nothing in a draft built from it may be sent until the wording is approved and this banner and
+  the "placeholder" tag in template_version are removed.
+
+  Fixed here and never written by a model: the subject, the structure, the report link and its anchor text,
+  the call to action and the closing. The model only fills {{ opening_line }} and {{ finding_sentence }}.
+  The first name is inserted by code. Autoescape is on, so a slot can never add markup.
+-#}
+{%- set template_version = "B-0.1-placeholder" -%}
+{%- set subject = "A short consent report for your website" -%}
+<p>{% if first_name %}Hi {{ first_name }},{% else %}Hello,{% endif %}</p>
+<p>{{ opening_line }}</p>
+<p>I took a look at how your website handles visitor consent and put the findings in a short report. {{ finding_sentence }}</p>
+<p>The details are in <a href="{{ report_url }}">your website consent report for {{ domain }}</a>, one page, written to be read in a couple of minutes.</p>
+<p>If useful, I can walk you through it on a short call whenever suits you.</p>
+<p>Regards,<br>[Sender name]<br>Consiva AI</p>

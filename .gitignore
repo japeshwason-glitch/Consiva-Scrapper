@@ -15,3 +15,14 @@ logs/*
 .env.docker
 .env.bak
 data/partner.pause
+
+# Auto Email Campaign / report job: operational output, never committed (CRM score backups, run CSVs, previews,
+# the review file with real company drafts).
+data/*_backup_*.json
+data/crm_score_backup_*.json
+data/report_run_*.csv
+data/reports_preview/
+data/last_sample_ids.json
+data/partner_rescan_*
+data/reports.pause
+output/

@@ -1,0 +1,12 @@
+# One-page DPDP report job (report_build.py) -- installed only into the
+# separate reports image (Dockerfile.reports), on top of requirements.txt.
+# The pipeline image does not need these. Versions are what that build
+# resolved and the report tests passed against.
+jinja2==3.1.6
+markupsafe==3.0.4
+boto3==1.43.108
+botocore==1.43.108
+s3transfer==0.19.2
+jmespath==1.1.0
+pypdf==6.19.0
+pyyaml==6.0.3

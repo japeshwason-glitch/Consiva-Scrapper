@@ -123,6 +123,74 @@ services:
     shm_size: 1gb
     command: python scheduler.py
 
+  reports:
+    # One-page DPDP report job for PartnerImport leads (docs/REPORTS.md).
+    # Its own image and its own profile: `up`, with or without the pipeline
+    # profile, never starts it, and building it never touches the scheduler
+    # or API images. Run it on demand:
+    #   docker compose --profile reports run --rm reports python report_build.py --dry-run --limit 1
+    # The repo is mounted, so a code change needs no rebuild; only a change to
+    # requirements-reports.txt does.
+    build:
+      context: .
+      dockerfile: Dockerfile.reports
+    image: consiva-scrapper-reports
+    profiles: ["reports"]
+    env_file: .env.docker
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Public resolvers, not the pipeline's unbound. Our own recursion answers
+    # NXDOMAIN for sites behind some CDNs (www.bisleri.com, www.biba.in,
+    # www.arvind.com -- cc-ecdn.net / induscdn.com chains), which failed those
+    # reports outright; 1.1.1.1 / 8.8.8.8 resolve them. A report run is a few
+    # thousand lookups, far below the volume the pipeline self-hosts for.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    volumes:
+      - .:/app
+    working_dir: /app
+    shm_size: 1gb
+    command: python report_build.py --help
+
+  campaign:
+    # Auto Email Campaign scheduler (campaign/): drafts one first email per PartnerImport
+    # company. Its own image and its own profile, so `up` never starts it and building it touches
+    # no other service. It needs only Postgres (apply migrations first: `docker compose run --rm migrate`).
+    # The CRM is written only through campaign/crm_write.py (status, report and AE_ columns, PartnerImport
+    # rows, never test companies); nothing is ever sent. Production companies are not processed until
+    # AE_PRODUCTION_ENABLED=1 (the scheduled run only takes them in).
+    #   docker compose --profile campaign build campaign
+    #   docker compose --profile campaign up -d campaign
+    #   docker compose --profile campaign run --rm --no-deps campaign python -m campaign.jobs prepare --dry-run
+    # The repo is mounted, so a code change needs no rebuild; only a change to a requirements file does.
+    build:
+      context: .
+      dockerfile: Dockerfile.campaign
+    image: consiva-scrapper-campaign
+    profiles: ["campaign"]
+    restart: unless-stopped
+    env_file: .env.docker
+    environment:
+      TZ: ${TZ:-Asia/Kolkata}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # Public resolvers, as for the reports service: the pipeline's own unbound answers NXDOMAIN for
+    # sites behind some CDNs, which would fail scans and MX lookups that should succeed.
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    volumes:
+      - .:/app
+    working_dir: /app
+    shm_size: 1gb
+    command: supercronic /app/campaign/crontab
+
   unbound:
     # Built here rather than pulled: mvance/unbound is amd64 and
     # mvance/unbound-rpi is 32-bit ARMv7, and this host is arm64 -- the second

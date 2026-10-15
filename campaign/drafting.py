@@ -10,7 +10,7 @@ Input gate (a company that fails stays `verified` and is counted, so it can be r
   * a report was generated (report_url) and is at most settings.REPORT_FRESH_DAYS old;
   * the daily cap (settings.DRAFTS_PER_DAY, IST calendar day) is not used up.
 
-The email is a band template (fixed wording) with two sentences from the model, validated in code:
+The email is a band template (fixed wording) with three sentences from the model, validated in code:
 a bad answer is regenerated once, and a slot still bad after that uses the plain fallback. Each slot's
 source (model / retry / fallback), the validation failures and the token usage are stored on the draft.
 If the model cannot be reached the company stays `verified` and the stage stops (a down server is not
@@ -116,11 +116,19 @@ def draft_one(cur, company, generator):
     findings = draft_findings.build_findings(scan, {
         "company_name": company["company_name"] or company["domain"], "domain": company["domain"],
         "industry": company["industry"], "band": company["band"], "score": company["score"]})
-    payload = draft_model.build_payload(findings, contact["title_function"])
-    slots, sources, log, tokens, attempts = _generate_slots(payload, findings, generator)
+    if cfg.USE_MODEL:
+        payload = draft_model.build_payload(findings, contact["title_function"])
+        slots, sources, log, tokens, attempts = _generate_slots(payload, findings, generator)
+        provider, model, prompt_version = cfg.PROVIDER, cfg.model_for(cfg.PROVIDER), cfg.PROMPT_VERSION
+    else:                                    # the approved fixed template: nothing is generated
+        slots, sources, log, attempts = {s: "" for s in SLOTS}, {s: "fixed" for s in SLOTS}, [], 0
+        tokens = {"input_tokens": 0, "output_tokens": 0}
+        provider, model, prompt_version = "fixed", "none", cfg.FIXED_PROMPT_VERSION
+    facts = {"company": findings["company_name"], "n_tracking": findings["tracking_cookie_count"],
+             "no_banner": not findings["cookie_banner"], "n_third": findings["third_party_count"]}
     mail = draft_templates.render(company["band"], slots["opening_line"], slots["finding_sentence"],
-                                  contact["first_name"], company["report_url"], company["domain"])
-    provider = cfg.PROVIDER
+                                  slots["impact_sentence"], contact["first_name"], company["report_url"],
+                                  company["domain"], facts)
     cur.execute("""INSERT INTO ae_drafts (company_id, contact_id, to_email, subject, body_html, plain_text, band,
                        draft_status, template_version, prompt_version, opening_line, finding_sentence,
                        contact_function, findings, provider, model, slot_source, validation_log, attempts,
@@ -139,8 +147,8 @@ def draft_one(cur, company, generator):
                        written_to_crm_at = NULL, sent_at = NULL""",
                 (company["company_id"], contact["contact_id"], contact["email"], mail.subject, mail.html, mail.text,
                  company["band"], "ready" if contact["nb_decision"] == "OK" else "risky", mail.template_version,
-                 cfg.PROMPT_VERSION, slots["opening_line"], slots["finding_sentence"], contact["title_function"],
-                 json.dumps(findings), provider, cfg.model_for(provider), json.dumps(sources), json.dumps(log),
+                 prompt_version, slots["opening_line"], slots["finding_sentence"], contact["title_function"],
+                 json.dumps(findings), provider, model, json.dumps(sources), json.dumps(log),
                  attempts, tokens["input_tokens"], tokens["output_tokens"]))
     status.set_status(cur, company["company_id"], "drafted",
                       f"{'ready' if contact['nb_decision'] == 'OK' else 'risky'} draft, band {company['band']}, "

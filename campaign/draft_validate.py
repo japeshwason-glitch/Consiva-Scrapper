@@ -15,10 +15,12 @@ import report_findings as rf
 from . import draft_findings
 from . import settings_drafts as cfg
 
-SLOTS = ("opening_line", "finding_sentence")
+SLOTS = ("opening_line", "finding_sentence", "impact_sentence")
 _DOMAIN = re.compile(r"\b[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.[a-z]{2,}\b", re.I)
 _URL = re.compile(r"https?://|www\.|\b[a-z0-9-]+\.[a-z]{2,}/\S*", re.I)
 _EMAIL = re.compile(r"[^\s@]+@[^\s@]+")
+_ROLE_OPENER = re.compile(r"^\s*as (a|an|someone|the)\b", re.I)
+_STOCK = re.compile(r"\b(engaged in|as (detailed|presented|shown|described|seen) on)\b", re.I)
 
 
 def _known_names():
@@ -64,7 +66,7 @@ def validate_slot(slot, text, findings):
     low, high = cfg.LENGTH_LIMITS[slot]
     if not low <= len(text) <= high:
         fails.append("length")
-    if re.search(r"[<>&`]", text):
+    if re.search(r"[<>`]", text) or re.search(r"&\w+;", text):       # a bare & (R&D, L&T) is fine: the template escapes it
         fails.append("markup")
     if _EMAIL.search(text):
         fails.append("email")
@@ -77,6 +79,8 @@ def validate_slot(slot, text, findings):
         fails.append("number")
     if _bad_names(text, draft_findings.allowed_names(findings)):
         fails.append("name")
+    if (slot == "impact_sentence" and _ROLE_OPENER.search(text)) or (slot == "opening_line" and _STOCK.search(text)):
+        fails.append("stock_phrase")
     if any(re.search(rf"(?<![\w-]){re.escape(w)}(?![\w-])", text, re.I) for w in cfg.BANNED_WORDS):
         fails.append("banned_word")
     if any(re.search(p, text, re.I) for p in cfg.LEGAL_PATTERNS):

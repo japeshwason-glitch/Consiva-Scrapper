@@ -15,7 +15,8 @@ def _bool(raw):
 
 
 # --- who is in scope -------------------------------------------------------------
-ALLOWED_SOURCES = tuple(s.strip() for s in _env("AE_ALLOWED_SOURCES", "PartnerImport").split(","))
+# "*" = any Source in dbo.CRM_Scrapper, a NULL one too. A list ("PartnerImport,CsvImport") narrows what intake reads.
+ALLOWED_SOURCES = tuple(s.strip() for s in _env("AE_ALLOWED_SOURCES", "*").split(","))
 
 # Production intake takes every PartnerImport company not yet in ae_companies. Those
 # that already carry a ReportStatus were processed by the retired report script and
@@ -35,8 +36,8 @@ VERIFICATION_CACHE_DAYS = _env("AE_VERIFICATION_CACHE_DAYS", 45, int)
 DRAFT_EXPIRY_DAYS = _env("AE_DRAFT_EXPIRY_DAYS", 14, int)
 
 # --- volumes ----------------------------------------------------------------------
-NEVERBOUNCE_DAILY_CREDIT_CAP = _env("AE_NEVERBOUNCE_DAILY_CREDIT_CAP", 200, int)
-DRAFTS_PER_DAY = _env("AE_DRAFTS_PER_DAY", 100, int)
+NEVERBOUNCE_DAILY_CREDIT_CAP = _env("AE_NEVERBOUNCE_DAILY_CREDIT_CAP", 5000, int)
+DRAFTS_PER_DAY = _env("AE_DRAFTS_PER_DAY", 5000, int)      # in step with the NeverBounce cap, so verified companies are not left waiting
 FALLBACK_CONTACTS = _env("AE_FALLBACK_CONTACTS", 2, int)
 SCAN_RETRIES = _env("AE_SCAN_RETRIES", 2, int)            # attempts = retries + 1
 SCAN_RETRY_DELAY_MINUTES = _env("AE_SCAN_RETRY_DELAY_MINUTES", 60, int)
@@ -46,6 +47,10 @@ INTAKE_BATCH_SIZE = _env("AE_INTAKE_BATCH_SIZE", 500, int)
 # or a run is started by hand with --production. The scheduled job only takes companies in; the test
 # cohort (--sample) always runs.
 PRODUCTION_ENABLED = _env("AE_PRODUCTION_ENABLED", False, _bool)
+
+# The daily job (06:30 IST) loops intake + stages until nothing moves, bounded by these.
+DAILY_MAX_ITERATIONS = _env("AE_DAILY_MAX_ITERATIONS", 40, int)
+DAILY_MAX_HOURS = _env("AE_DAILY_MAX_HOURS", 5.0, float)
 
 # --- stage 4: the scan ------------------------------------------------------------------
 SCAN_REUSE_DAYS = REPORT_FRESH_DAYS                         # a scan younger than this is reused, not repeated
@@ -82,7 +87,7 @@ EMAIL_ACTIVITY_TYPE = "Email"
 BOUNCE_EVENT_TYPE = "Bounce"
 
 # --- what this pipeline may write to the CRM (campaign/crm_write.py) --------------------
-# Allowed by name, nothing else, ever, PartnerImport rows only:
+# Allowed by name, nothing else, ever, PartnerImport and CsvImport rows only:
 #   * the two status columns, with only the values the table already uses;
 #   * the report columns the retired report job used to fill (see crm_write.REPORT_COLUMNS);
 #   * the AE_ draft columns the CRM team created.
@@ -93,11 +98,31 @@ VOCAB = {
     "ScrapeStatus": frozenset({"done", "failed"}),
     "ReportStatus": frozenset({"generated", "no_gap", "unscannable"}),
 }
-WRITE_SOURCE = "PartnerImport"      # fixed, not configurable: the guard must not be loosened by env
+WRITE_SOURCES = ("*",)      # any Source (a NULL one too); fixed, not configurable: the guard must not be loosened by env
+WRITE_SOURCE = "*"
+
+# Leads from crm.CrmLeads (GUID ids) are mapped to integer company ids above this (migration 011); crm_write sends
+# those, and only the AE_ draft columns, to crm.CrmLeads. Fixed, not configurable.
+LEAD_ID_BASE = 1_000_000_000
+CRM_LEADS_TABLE = "crm.CrmLeads"
 
 # crm_write refuses EVERY CRM write unless the Postgres database it is connected to is this one. A throwaway,
 # test or demo database must never be able to drive a real CRM write.
 PRIMARY_DATABASE = _env("AE_PRIMARY_DATABASE", "consiva")
+
+# When set, crm_write refuses every write unless the SQL Server database it is connected to (asked of SQL Server, not read
+# from a setting) is exactly this one. A run against a staging CRM sets it to the staging database's name, so a wrong
+# CRM_DB_NAME can never send a staging run's writes to the live CRM; the scheduled production job sets it to the live name.
+EXPECT_CRM_DATABASE = _env("AE_EXPECT_CRM_DATABASE", "")
+
+# The staging CRM's dbo.CRM_Scrapper has no ScrapeStatus / ScrapeAttempts / ScrapedAt (production does). With this on, the
+# pipeline neither reads nor writes ScrapeStatus; every other column behaves as usual. Off in production.
+NO_SCRAPE_STATUS = _env("AE_CRM_NO_SCRAPE_STATUS", False, _bool)
+
+# A crm.CrmLeads lead is the person who contacted us: stage 7 keeps them as the contact whatever their job title, instead
+# of holding the company for "no title" or a title that does not look like a decision-maker. They still have to pass the
+# free email checks and NeverBounce. Off = leads are ranked by title like every other company.
+LEAD_SELF_CONTACT = _env("AE_LEAD_SELF_CONTACT", True, _bool)
 
 # A draft built from a template whose version still says "placeholder" must not reach the CRM as sendable
 # (AE_DraftStatus ready / risky). With this switched on (demo only) it is written as 'expired' so the CRM

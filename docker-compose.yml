@@ -175,6 +175,12 @@ services:
     env_file: .env.docker
     environment:
       TZ: ${TZ:-Asia/Kolkata}
+      # The daily job spends real NeverBounce credits (cap: AE_NEVERBOUNCE_DAILY_CREDIT_CAP, default 5000 a day) and
+      # needs a live verdict for every production company; mock verdicts are refused for production. The email
+      # text is a fixed template: no model writes it. Set AE_UNSUBSCRIBE_URL for the Unsubscribe button.
+      AE_NB_MODE: ${AE_NB_MODE:-live}
+      AE_EXPECT_CRM_DATABASE: ${AE_EXPECT_CRM_DATABASE:-CookieConsentDB}      # CRM writes refuse any other database
+      AE_UNSUBSCRIBE_URL: ${AE_UNSUBSCRIBE_URL:-}
     depends_on:
       postgres:
         condition: service_healthy

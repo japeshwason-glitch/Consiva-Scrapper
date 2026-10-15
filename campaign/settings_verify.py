@@ -17,8 +17,9 @@ MODE = _env("AE_NB_MODE", "mock")
 MODES = ("off", "mock", "live")
 
 API_BASE = _env("AE_NB_API_BASE", "https://api.neverbounce.com/v4")
-HTTP_TIMEOUT_S = _env("AE_NB_HTTP_TIMEOUT_S", 20, int)
+HTTP_TIMEOUT_S = _env("AE_NB_HTTP_TIMEOUT_S", 90, int)     # some mail servers make NeverBounce wait 25s+
 
+CONCURRENCY = _env("AE_NB_CONCURRENCY", 8, int)               # parallel single checks in a live run (1 = one at a time)
 DAILY_CREDIT_CAP = settings.NEVERBOUNCE_DAILY_CREDIT_CAP    # credits per IST calendar day
 CACHE_DAYS = settings.VERIFICATION_CACHE_DAYS               # a verdict this young is reused, not paid for again
 REPORT_FRESH_DAYS = settings.REPORT_FRESH_DAYS              # the report must be younger than this

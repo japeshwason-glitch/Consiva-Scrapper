@@ -3,8 +3,11 @@
 # advisory lock and exits if another run holds it, so overlapping runs are harmless.
 # Add --dry-run to a line to watch it without writing anything.
 
-# prepare: every 30 minutes. Milestone 1: intake only.
-*/30 * * * * cd /app && python -m campaign.jobs prepare
+# daily: 06:30 IST. The whole pipeline for every allowed source (PartnerImport, CsvImport) and crm.CrmLeads:
+# intake, free checks, domain, scan, score gate, report, contact ranking, NeverBounce, drafting, and the AE_
+# write. It repeats until nothing moves (or AE_DAILY_MAX_HOURS), and skips whatever is already done.
+# NeverBounce is live in this service (docker-compose.yml), with its daily credit cap (AE_NEVERBOUNCE_DAILY_CREDIT_CAP).
+30 6 * * * cd /app && python -m campaign.jobs daily
 
-# housekeeping: 02:00 IST. Milestone 1: reconciliation only; the rest is a stub.
+# housekeeping: 02:00 IST. Reconciliation (takes in anything intake missed) and the read-only mirror audit.
 0 2 * * * cd /app && python -m campaign.jobs housekeeping

@@ -1,7 +1,12 @@
 """Config for stages 2 (free email checks) and 3 (domain). Overridable by AE_* environment variables."""
 from pathlib import Path
 
-from .settings import FREE_MAIL_DOMAINS, _env  # noqa: F401  (FREE_MAIL_DOMAINS re-exported for the checks)
+from .settings import FREE_MAIL_DOMAINS, _bool, _env  # noqa: F401  (FREE_MAIL_DOMAINS re-exported for the checks)
+
+# A contact on a free-mail address (gmail, yahoo, ...) passes the free checks: for small companies it is often the
+# founder's real inbox. NeverBounce still verifies it before anything is drafted, and stage 3 still never takes a
+# company domain from a free-mail address.
+ALLOW_FREE_MAIL = _env("AE_ALLOW_FREE_MAIL", True, _bool)
 
 # Local parts that name a function, not a person.
 ROLE_LOCAL_PARTS = frozenset(p.strip() for p in _env(

@@ -139,7 +139,7 @@ def check_contact(cur, email, mx):
     email = (email or "").strip()
     if not syntax_ok(email):
         return False, "syntax"
-    if is_free_mail(email):
+    if is_free_mail(email) and not cfg.ALLOW_FREE_MAIL:
         return False, "free_mail"
     if is_role_address(email):
         return False, "role_address"

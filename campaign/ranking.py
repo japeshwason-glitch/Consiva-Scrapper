@@ -18,7 +18,7 @@ no further calls are made, so a down server costs one timeout, not one per compa
 """
 import psycopg2.extras
 
-from . import settings_titles as st, status, title_llm, titles
+from . import settings, settings_titles as st, status, title_llm, titles
 
 
 class Deferred(Exception):
@@ -177,6 +177,10 @@ def _process(run, cur, company):
             new_status = "contact_ranked"
             reason = (f"best contact: {best['contact']['job_title']!r} ({best['function']}, seniority "
                       f"{best['seniority']}, relevance {best['relevance']}, via {best['source']}); {size} company")
+    if (new_status == "held_no_contact" and ranked and cid >= settings.LEAD_ID_BASE and settings.LEAD_SELF_CONTACT):
+        new_status = "contact_ranked"
+        reason = (f"lead: the person who contacted us is the contact, whatever the title "
+                  f"({ranked[0]['contact']['job_title']!r})")
     run.counts[new_status] += 1
     for src in ("rule", "llm", "unclassified", "none"):
         run.counts[_TALLY_KEY[src]] += tally[src]

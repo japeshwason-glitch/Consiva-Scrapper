@@ -1,5 +1,5 @@
 """
-The model call for the two draft slots, and what the model is allowed to see.
+The model call for the three draft slots, and what the model is allowed to see.
 
 The model gets company facts and the structured findings, plus the contact's job FUNCTION ("ceo",
 "marketing"): never a name, email, phone or the raw title. Code inserts the first name after generation.
@@ -17,20 +17,33 @@ import llm
 from . import settings_drafts as cfg
 
 SYSTEM_PROMPT = (
-    "You write two sentences for a first outreach email from a data-protection software company to a "
-    "business. Use ONLY the facts in the JSON the user sends. Never add or invent facts, numbers, vendor or "
-    "product names, or claims about the company or its customers.\n"
-    "opening_line: one sentence about the company's business, using only company_name and what_it_does "
-    "(if what_it_does is null, write a neutral sentence about the company's website).\n"
-    "finding_sentence: one sentence that frames the top finding in plain, calm language for the reader's "
-    "role (contact_function). No legal references, no urgency, no threats, no advice on what is required.\n"
-    "Each sentence ends with a full stop. No greetings, no names of people, no URLs, no email addresses, no "
-    "markup. Reply with JSON only."
+    "You write three sentences for a personalised first outreach email from a data-protection software company "
+    "to one business. Write directly to the reader: say \"your website\" and \"you\", never \"their\" or "
+    "\"the company\". Use ONLY the facts in the JSON the user sends. Never add or invent facts, numbers, vendor or "
+    "product names, or claims about the company, its customers or its size.\n"
+    "opening_line: one sentence about the company's business, built from company_name and what_it_does (if "
+    "what_it_does is null, a neutral sentence about the company's website). Follow opening_style so openings "
+    "differ from company to company. Never use the phrases \"engaged in\", \"as detailed on\", \"as presented on\", "
+    "\"as shown on\" or \"as described on\".\n"
+    "finding_sentence: one sentence naming the most concrete thing found on the site, using the real details in "
+    "findings (the tracker vendors, the number of tracking cookies, the form fields collected, or the missing "
+    "banner or privacy notice), in plain calm language.\n"
+    "impact_sentence: one sentence on what that finding means in practice for THIS business: connect the finding "
+    "to what_it_does and to what a visitor of that kind of business is doing on the site (browsing products, "
+    "enquiring, applying, booking, signing up) and what they would not expect to happen to their data. Let "
+    "contact_function decide which angle you take, without naming the role: tech = how the scripts and tags load; "
+    "marketing = what the analytics and ad tags collect; security = which third parties receive visitor data; "
+    "ceo, founder or director = how it reads to customers and partners. Never start with \"As a\", \"As an\" or "
+    "\"As someone\", never mention the reader's job title, and avoid the stock words \"trust\", \"transparency\" "
+    "and \"data handling\". No legal references, no urgency, no threats, no advice on what is required.\n"
+    "Each sentence ends with a full stop and is a single sentence. No greetings, no names of people, no URLs, no "
+    "email addresses, no markup, no questions. Reply with JSON only."
 )
 SCHEMA = {
     "type": "object",
-    "properties": {"opening_line": {"type": "string"}, "finding_sentence": {"type": "string"}},
-    "required": ["opening_line", "finding_sentence"],
+    "properties": {"opening_line": {"type": "string"}, "finding_sentence": {"type": "string"},
+                   "impact_sentence": {"type": "string"}},
+    "required": ["opening_line", "finding_sentence", "impact_sentence"],
     "additionalProperties": False,
 }
 _FINDING_FIELDS = ("top_finding", "finding_codes", "tracking_cookie_count", "third_party_count",
@@ -41,9 +54,24 @@ class ModelUnavailable(Exception):
     """The provider cannot be used right now (no key, refused, down, rate limited past our retries)."""
 
 
+OPENING_STYLES = (
+    "Start with the company name, then say plainly what it does.",
+    "Start with what the business does for its customers, then name the company.",
+    "Open with a short observation about the sector the company works in (from what_it_does only), then the name.",
+    "Lead with the company name and a plain verb such as makes, builds, runs, supplies or serves.",
+    "Start with \"Your team at\" followed by the company name, and refer to the business.",
+    "Start with the domain name and say what the site shows about the business.",
+)
+
+
+def opening_style(domain):
+    """A stable pick from OPENING_STYLES for a domain: the same company always gets the same style."""
+    return OPENING_STYLES[sum(map(ord, domain or "")) % len(OPENING_STYLES)]
+
+
 def build_payload(findings, contact_function):
     """The only data that leaves this machine for a draft."""
-    return {"company_name": findings["company_name"], "domain": findings["domain"],
+    return {"opening_style": opening_style(findings["domain"]), "company_name": findings["company_name"], "domain": findings["domain"],
             "what_it_does": findings["what_it_does"], "band": findings["band"], "score": findings["score"],
             "gap_count": findings["gap_count"], "scan_date": findings["scan_date"],
             "findings": {k: findings[k] for k in _FINDING_FIELDS}, "contact_function": contact_function}
@@ -79,7 +107,8 @@ def _mock(payload):
     name, does = payload["company_name"], payload["what_it_does"]
     opening = (f"{name} works in {does.lower()}." if does else f"I came across {name} while looking at {payload['domain']}.")
     return ({"opening_line": opening,
-             "finding_sentence": "Some tracking cookies are set on your homepage before a visitor makes any choice."},
+             "finding_sentence": "Some tracking cookies are set on your homepage before a visitor makes any choice.",
+             "impact_sentence": "That is the kind of detail visitors rarely see but a careful reader of your site would want to know."},
             {"input_tokens": 0, "output_tokens": 0})
 
 

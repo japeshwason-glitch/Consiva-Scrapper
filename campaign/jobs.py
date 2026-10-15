@@ -3,6 +3,7 @@ The scheduled jobs.
 
     python -m campaign.jobs prepare      [--dry-run] [--limit N] [--sample N] [--seed S] [--production]
     python -m campaign.jobs housekeeping [--dry-run]
+    python -m campaign.jobs daily        [--dry-run]
 
 Every job goes through run_job(): kill switch first, then a Postgres advisory lock
 named after the job (a second run exits at once), then one bounded pass that keeps no
@@ -11,7 +12,11 @@ state in memory. Exit status is 0 for ran / killed / locked: a skipped run is no
 prepare = intake, then stages 2-9 (free checks, domain, scan, score gate, report, contact ranking,
 NeverBounce, drafting). The test cohort (--sample) runs every stage but never
 writes to the CRM; production is only processed when enabled. housekeeping runs the nightly
-reconciliation and the mirror audit.
+reconciliation and the mirror audit. daily (06:30 IST) is the whole pipeline for every allowed source and for
+crm.CrmLeads: it takes in what is new, runs stages 2-9 as production and writes the AE_ columns (stage 10), repeating
+until nothing moves or the time budget is used. What is already done is never repeated: a company already in
+ae_companies is skipped by intake, and a lead already mapped, or already carrying an AE_ draft in the CRM, by the
+lead intake. Rows a stage could not finish (a blocked scan waiting out its backoff) are picked up by the next run.
 """
 import argparse
 import json
@@ -143,7 +148,32 @@ def housekeeping(dry_run=False, reader=None, **_):
             reader.close()
 
 
-JOBS = {"prepare": prepare, "housekeeping": housekeeping}
+def daily(dry_run=False, **_):
+    """06:30 IST. Leads in, then prepare (intake, stages 2-9, stage 10) as production, until the funnel stops changing."""
+    from . import leads
+    started = time.monotonic()
+    taken = leads.run_intake(dry_run=dry_run)
+    log(f"leads intake{' (dry run)' if dry_run else ''}: "
+        f"{json.dumps({k: v for k, v in taken.items() if k != 'ids'}, sort_keys=True)}")
+    if dry_run:
+        prepare(dry_run=True, production=True, write_ae=True)
+        return
+    previous = None
+    for i in range(1, settings.DAILY_MAX_ITERATIONS + 1):
+        log(f"daily iteration {i}")
+        prepare(production=True, write_ae=True)
+        now = funnel(None)
+        if now == previous:
+            log(f"daily: nothing moved in iteration {i}; done")
+            return
+        if time.monotonic() - started > settings.DAILY_MAX_HOURS * 3600:
+            log(f"daily: time budget of {settings.DAILY_MAX_HOURS} h used; the next run carries on")
+            return
+        previous = now
+    log(f"daily: stopped after {settings.DAILY_MAX_ITERATIONS} iterations; the next run carries on")
+
+
+JOBS = {"prepare": prepare, "housekeeping": housekeeping, "daily": daily}
 
 
 def run_job(name, fn=None, **options):

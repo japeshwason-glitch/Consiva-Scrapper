@@ -28,11 +28,18 @@ GIGNATI_BASE_URL = _env("AE_LLM_BASE_URL", config.LLM_BASE_URL).rstrip("/")
 GIGNATI_MODEL = _env("AE_GIGNATI_DRAFT_MODEL", "")
 
 TEMPERATURE = _env("AE_DRAFT_TEMPERATURE", 0.3, float)
-MAX_TOKENS = _env("AE_DRAFT_MAX_TOKENS", 200, int)
+MAX_TOKENS = _env("AE_DRAFT_MAX_TOKENS", 320, int)
 TIMEOUT_S = _env("AE_DRAFT_TIMEOUT_S", 30, float)
 HTTP_RETRIES = _env("AE_DRAFT_HTTP_RETRIES", 2, int)       # for 429 / 5xx / timeouts, on top of the one regeneration
 RETRY_WAIT_S = _env("AE_DRAFT_RETRY_WAIT_S", 2, float)
-PROMPT_VERSION = "d1"
+PROMPT_VERSION = "d2"
+
+# The approved email is a fixed template with the company's own numbers filled in (templates/email/): no model writes
+# any of it. Switch AE_DRAFT_USE_MODEL on only for a template that has the three model slots again.
+USE_MODEL = _env("AE_DRAFT_USE_MODEL", False, lambda v: str(v).strip().lower() in ("1", "true", "yes", "on"))
+FIXED_PROMPT_VERSION = "t1-fixed"
+# Where the Unsubscribe button points. Unset, the draft says in so many words that no link is configured.
+UNSUBSCRIBE_URL = _env("AE_UNSUBSCRIBE_URL", "")
 
 # ----------------------------------------------------------------------------------------------------
 # UNVERIFIED PRICES. What a call costs, USD per million tokens, for the cost ESTIMATE only. These are placeholder
@@ -49,7 +56,7 @@ def model_for(provider):
 
 
 # --- validation ---------------------------------------------------------------------------------------
-LENGTH_LIMITS = {"opening_line": (30, 170), "finding_sentence": (40, 240)}      # characters, inclusive
+LENGTH_LIMITS = {"opening_line": (30, 200), "finding_sentence": (40, 260), "impact_sentence": (40, 260)}      # characters, inclusive
 
 BANNED_WORDS = tuple(w.strip() for w in _env(
     "AE_DRAFT_BANNED_WORDS",

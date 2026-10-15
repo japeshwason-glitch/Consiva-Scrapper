@@ -59,6 +59,7 @@ Slot colours: <span class="tag model">model</span><span class="tag retry">retry<
    <table>
     <tr><th>opening_line</th><td><span class="tag {{ d.slot_source.opening_line }}">{{ d.slot_source.opening_line }}</span></td></tr>
     <tr><th>finding_sentence</th><td><span class="tag {{ d.slot_source.finding_sentence }}">{{ d.slot_source.finding_sentence }}</span></td></tr>
+    <tr><th>impact_sentence</th><td><span class="tag {{ d.slot_source.impact_sentence }}">{{ d.slot_source.impact_sentence }}</span></td></tr>
     <tr><th>contact function</th><td>{{ d.contact_function or 'none' }}</td></tr>
    </table>
    <details><summary>Validation failures per attempt</summary><pre>{{ d.validation_log_text }}</pre></details>

@@ -14,7 +14,7 @@ It refuses, before it opens a connection:
   * any other column, any value outside the existing vocabulary, any value in the wrong format;
   * a company that is a test company, a legacy company, or not in ae_companies at all;
 and, once connected:
-  * a row whose Source is not PartnerImport (checked twice: by a read, and by the WHERE clause).
+  * a row that is not in the CRM (any Source is allowed, a NULL one too: the gate is ae_companies, below).
 
 ae_companies is the authority for "is this a test company", never an argument: a caller
 cannot talk its way past the guard.
@@ -102,7 +102,16 @@ FORMATS = {
 
 
 def _connect():
-    return crm_read.connect()
+    conn = crm_read.connect()
+    if settings.EXPECT_CRM_DATABASE:
+        cur = conn.cursor()
+        cur.execute("SELECT DB_NAME()")
+        actual = cur.fetchone()[0]
+        if actual != settings.EXPECT_CRM_DATABASE:
+            conn.close()
+            raise CrmWriteRefused(f"connected to CRM database {actual!r}, expected {settings.EXPECT_CRM_DATABASE!r} "
+                                  f"(AE_EXPECT_CRM_DATABASE); nothing was written")
+    return conn
 
 
 def _require_primary_database():
@@ -170,6 +179,12 @@ def update_company(company_id, **columns):
     Raises CrmWriteRefused (a guard said no) or CrmWriteFailed (the CRM did not take it).
     """
     _require_primary_database()
+    if company_id >= settings.LEAD_ID_BASE:
+        return _update_lead(company_id, columns)
+    if settings.NO_SCRAPE_STATUS:                        # a CRM without that column (staging): nothing to write there
+        columns = {k: v for k, v in columns.items() if k != settings.CRM["scrape_status"]}
+        if not columns:
+            return
     _check_columns(columns)
     _check_placeholder(columns)
     _guard(company_id)
@@ -183,11 +198,10 @@ def update_company(company_id, **columns):
         cur = conn.cursor()
         cur.execute(f"SELECT {src_col} FROM {table} WHERE {id_col} = %s", (company_id,))
         row = cur.fetchone()
-        if row is None or row[0] != settings.WRITE_SOURCE:
-            raise CrmWriteRefused(f"CRM row {company_id} is not a {settings.WRITE_SOURCE} row "
+        if row is None or ("*" not in settings.WRITE_SOURCES and row[0] not in settings.WRITE_SOURCES):
+            raise CrmWriteRefused(f"CRM row {company_id} is missing or not a {' / '.join(settings.WRITE_SOURCES)} row "
                                   f"(Source={None if row is None else row[0]!r})")
-        cur.execute(f"UPDATE {table} SET {sets} WHERE {id_col} = %s AND {src_col} = %s",
-                    (*values, company_id, settings.WRITE_SOURCE))
+        cur.execute(f"UPDATE {table} SET {sets} WHERE {id_col} = %s", (*values, company_id))
         if cur.rowcount != 1:
             conn.rollback()
             raise CrmWriteFailed(f"CRM row {company_id}: the update matched {cur.rowcount} rows, expected 1")
@@ -200,6 +214,50 @@ def update_company(company_id, **columns):
         except Exception:                       # noqa: BLE001 -- the connection may already be gone
             pass
         raise CrmWriteFailed(f"CRM write for company {company_id} failed: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def _update_lead(company_id, columns):
+    """
+    A lead taken from crm.CrmLeads: only the AE_ draft columns are written, to that row (found through
+    ae_lead_map), never a deleted row, never a test company. crm.CrmLeads has no status or report columns, so those
+    (which the pipeline's status changes carry) are dropped here, not written anywhere.
+    """
+    columns = {k: v for k, v in columns.items() if k in settings.AE_COLUMNS}
+    if not columns:
+        return
+    _check_columns(columns)
+    _check_placeholder(columns)
+    _guard(company_id)
+    with db.get_cursor() as cur:
+        cur.execute("SELECT lead_id FROM ae_lead_map WHERE company_id = %s", (company_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise CrmWriteRefused(f"company {company_id} is not a mapped crm.CrmLeads lead")
+    table = settings.CRM_LEADS_TABLE
+    sets = ", ".join(f"{n} = SYSUTCDATETIME()" if v is SERVER_NOW else f"{n} = %s" for n, v in columns.items())
+    values = tuple(v for v in columns.values() if v is not SERVER_NOW)
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT IsDeleted FROM {table} WHERE Id = %s", (row["lead_id"],))
+        found = cur.fetchone()
+        if found is None or found[0]:
+            raise CrmWriteRefused(f"lead {row['lead_id']} is missing or deleted in {table}")
+        cur.execute(f"UPDATE {table} SET {sets} WHERE Id = %s AND IsDeleted = 0", (*values, row["lead_id"]))
+        if cur.rowcount != 1:
+            conn.rollback()
+            raise CrmWriteFailed(f"lead {row['lead_id']}: the update matched {cur.rowcount} rows, expected 1")
+        conn.commit()
+    except (CrmWriteRefused, CrmWriteFailed):
+        raise
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:                       # noqa: BLE001 -- the connection may already be gone
+            pass
+        raise CrmWriteFailed(f"CRM write for lead company {company_id} failed: {exc}") from exc
     finally:
         conn.close()
 

@@ -1,17 +1,23 @@
 {#-
-  PLACEHOLDER WORDING. Not approved by the CEO or the sales team: every sentence in this file is a stand-in
-  for review. Nothing in a draft built from it may be sent until the wording is approved and this banner and
-  the "placeholder" tag in template_version are removed.
-
-  Fixed here and never written by a model: the subject, the structure, the report link and its anchor text,
-  the call to action and the closing. The model only fills {{ opening_line }} and {{ finding_sentence }}.
-  The first name is inserted by code. Autoescape is on, so a slot can never add markup.
+  The approved first-email text (supplied by Japesh), filled with the company's own numbers; no model writes any of it.
+  Approved by Japesh for use. {{WebsiteURL}} and {{UnsubscribeButton}} are left as literal merge fields: the CRM tool
+  fills them when it sends (AE_UNSUBSCRIBE_URL is not used by this template). The signature is whatever the CRM user's own signature adds. Nothing sends from here; the CRM person sends.
+  Autoescape is on. A bullet appears only when it is true for that company (tracking cookies, no banner, third parties).
 -#}
-{%- set template_version = "C-0.1-placeholder" -%}
-{%- set subject = "A quick look at consent on your website" -%}
+{%- set template_version = "C-1.0" -%}
+{%- set subject = "A quick look at consent on " ~ domain ~ "" -%}
 <p>{% if first_name %}Hi {{ first_name }},{% else %}Hello,{% endif %}</p>
-<p>{{ opening_line }}</p>
-<p>I looked at how your website handles visitor consent and noted a few things worth a glance. {{ finding_sentence }}</p>
-<p>The details are in <a href="{{ report_url }}">your website consent summary for {{ domain }}</a>, one page, written to be read in a couple of minutes.</p>
-<p>If you would like to talk it through, reply here and we can find a time.</p>
-<p>Regards,<br>[Sender name]<br>Consiva AI</p>
+<p>I was looking at {% if company != domain %}{{ company }}&rsquo;s website, {% else %}your website, {% endif %}{{ domain }}, and noticed a few things worth flagging as India&rsquo;s DPDP requirements come into focus.</p>
+<p>Our scan picked up:</p>
+<ul>
+{% if n_tracking %}<li>{{ n_tracking }} tracking tool{{ '' if n_tracking == 1 else 's' }} running before visitor consent</li>
+{% endif %}{% if no_banner %}<li>No visible cookie consent banner on the website</li>
+{% endif %}{% if n_third %}<li>Connections to {{ n_third }} third-party domain{{ '' if n_third == 1 else 's' }} before consent</li>
+{% endif %}</ul>
+<p>These gaps can easily go unnoticed as websites evolve. But with DPDP compliance becoming a priority, it&rsquo;s worth checking whether your website is handling visitor data the way it should.</p>
+<p>That&rsquo;s where Consiva.ai comes in. Our platform helps businesses bring their websites in line with applicable DPDP requirements by managing visitor consent, data requests and breach reporting&mdash;all in one place, with data hosted in India.</p>
+<p>You can <a href="{{ report_url }}">take a look</a>, and I can walk you through the findings and show you how Consiva.ai could help {% if company != domain %}{{ company }}{% else %}your team{% endif %} address the gaps identified. re: {% raw %}{{WebsiteURL}}{% endraw %}</p>
+<p>Would you be open to a quick 15-minute conversation next week?</p>
+<p>If someone else on your team handles privacy or technology compliance, I&rsquo;d appreciate a pointer.</p>
+<p>Thanks in advance; awaiting your reply.</p>
+<p>{% raw %}{{UnsubscribeButton}}{% endraw %}</p>

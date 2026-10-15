@@ -1,5 +1,5 @@
 """
-The email templates (templates/email/band_a..d.html.j2) and the plain fallbacks for the two model slots.
+The email templates (templates/email/band_a..d.html.j2) and the plain fallbacks for the three model slots.
 
 Everything a recipient reads is either in a template file (fixed: subject, structure, the report link and
 its anchor text, the call to action, the closing) or one of the two slots, opening_line and
@@ -52,16 +52,26 @@ def html_to_text(markup):
     """The plain-text twin of a rendered email: paragraphs, line breaks, links as `text (url)`."""
     text = re.sub(r'<a href="([^"]+)"[^>]*>(.*?)</a>', lambda m: f"{m.group(2)} ({m.group(1)})", markup, flags=re.S)
     text = re.sub(r"<br\s*/?>", "\n", text)
+    text = re.sub(r"<li>", "\u2022 ", text)
+    text = re.sub(r"</li>\s*", "\n", text)
+    text = re.sub(r"</ul>", "\n", text)
     text = re.sub(r"</p>", "\n\n", text)
     text = re.sub(r"<[^>]+>", "", text)
     return re.sub(r"\n{3,}", "\n\n", html.unescape(text)).strip() + "\n"
 
 
-def render(band, opening_line, finding_sentence, first_name, report_url, domain):
-    """Subject, HTML, plain text and version for one draft. The slots are plain text, escaped on the way in."""
+def render(band, opening_line, finding_sentence, impact_sentence, first_name, report_url, domain, facts=None):
+    """
+    Subject, HTML, plain text and version for one draft. The slots are plain text, escaped on the way in.
+    `facts` are the company's own numbers for the fixed template: company, n_tracking, no_banner, n_third.
+    """
     template = _env.from_string(_source(band))
-    context = dict(opening_line=opening_line, finding_sentence=finding_sentence,
-                   first_name=(first_name or "").strip() or None, report_url=report_url, domain=domain)
+    facts = facts or {}
+    context = dict(opening_line=opening_line, finding_sentence=finding_sentence, impact_sentence=impact_sentence,
+                   first_name=(first_name or "").strip() or None, report_url=report_url, domain=domain,
+                   company=facts.get("company") or domain, n_tracking=facts.get("n_tracking", 0),
+                   no_banner=facts.get("no_banner", False), n_third=facts.get("n_third", 0),
+                   unsubscribe_url=cfg.UNSUBSCRIBE_URL or None)
     body = template.render(context).strip()
     subject = template.make_module(context).subject
     return Rendered(subject, body, html_to_text(body), template_version(band))
@@ -77,7 +87,8 @@ _FINDING_DEFAULT = "A few things on your homepage's consent set-up looked worth 
 
 
 def fallback_slots(findings):
-    """The two sentences used when the model's are rejected twice. They state nothing the findings lack."""
+    """The three sentences used when the model's are rejected twice. They state nothing the findings lack."""
     opening = f"I took a quick look at the consent set-up on {findings['domain']}."
     top = (findings.get("top_finding") or {}).get("code")
-    return {"opening_line": opening, "finding_sentence": _FINDING_FALLBACKS.get(top, _FINDING_DEFAULT)}
+    return {"opening_line": opening, "finding_sentence": _FINDING_FALLBACKS.get(top, _FINDING_DEFAULT),
+            "impact_sentence": "It is a small detail on the page, but one visitors notice more and more."}

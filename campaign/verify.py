@@ -32,6 +32,7 @@ Facts that cost money or are true whatever happens next (the credit ledger, the 
 suppression list) are committed at once on their own connection; the company and contact rows move in
 the claim's transaction. No CRM writes happen here.
 """
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 import db
@@ -211,6 +212,8 @@ class _Run:
         self.client, self.live, self.day, self.balance = client, live, day, balance
         self.source = "live" if live else "mock"
         self.stopped = None
+        self.prefetched = set()      # addresses asked in parallel by _prefetch: their verdicts are in the cache
+        self.failed = set()          # addresses whose parallel call timed out or failed: left for the next run
 
 
 def _mark(cur, ct, verdict, decision, source):
@@ -223,6 +226,8 @@ def _ask(run, email, counts):
     One verdict for an address from the API (or the mock). Returns the verdict, or None after setting
     run.stopped when the call cannot be made or did not answer.
     """
+    if email in run.failed:                      # its parallel call failed: this company waits, the stage goes on
+        return None
     if run.live:
         if run.balance is not None and run.balance < 1:
             run.stopped = "low_balance"
@@ -278,7 +283,8 @@ def _verify_company(cur, co, contacts, run, counts):
         hit = _cached(cur, [email], co).get(email)
         if hit:
             verdict, source = hit                           # served with the source it was written with
-            counts["cache_hits"] += 1
+            if email not in run.prefetched:                 # a prefetched verdict is a call we paid for, not a hit
+                counts["cache_hits"] += 1
         else:
             verdict = _ask(run, email, counts)
             if verdict is None:
@@ -305,6 +311,74 @@ def _verify_company(cur, co, contacts, run, counts):
     status.set_status(cur, co["company_id"], "suppressed",
                       "NeverBounce: every checked contact is DO_NOT_EMAIL")
     return "suppressed"
+
+
+def _first_call(cur, co, contacts):
+    """The address _verify_company would ask NeverBounce about first for this company, or None if it needs no call."""
+    for ct in contacts[: 1 + settings_verify.FALLBACKS]:
+        email = _email(ct)
+        decision = _usable_decision(co, ct)
+        if decision in ("OK", "RISKY"):
+            return None
+        if decision == "DO_NOT_EMAIL" or _suppressed_set(cur, [email]):
+            continue
+        if _cached(cur, [email], co).get(email):
+            return None
+        return email
+    return None
+
+
+def _prefetch(cur, companies, plans, run, counts):
+    """
+    Asks NeverBounce about each company's first uncached address in parallel (settings_verify.CONCURRENCY at a
+    time), before the sequential pass, which then finds the verdicts in the cache. Only the HTTP calls run in
+    threads: credits are reserved here, one by one, and every verdict is cached and counted here, so the cap
+    and the balance hold exactly as in the sequential path. A call that fails gives its credit back and the
+    address is left to the next run (run.failed); if every call fails, the stage stops as it always did.
+    """
+    todo = []
+    for co in companies:
+        plan = plans[co["company_id"]]
+        if plan["blocked"] or not _may_verify(co, run.source):
+            continue
+        email = _first_call(cur, co, plan["contacts"])
+        if email and email not in todo:
+            todo.append(email)
+    reserved = []
+    for email in todo:
+        if run.balance is not None and run.balance - len(reserved) < 1:
+            break                                    # the sequential pass reports low_balance
+        if not _reserve_credit(run.day, settings_verify.DAILY_CREDIT_CAP):
+            break                                    # ... and daily_cap
+        reserved.append(email)
+    if not reserved:
+        return
+
+    def call(email):
+        try:
+            return email, run.client.check(email), None
+        except (neverbounce.TransientError, neverbounce.NeverBounceError) as exc:
+            return email, None, exc
+
+    answered, last_error = 0, None
+    with ThreadPoolExecutor(max_workers=settings_verify.CONCURRENCY) as pool:
+        for email, verdict, exc in pool.map(call, reserved):
+            if exc is not None:
+                _release_credit(run.day)
+                run.failed.add(email)
+                last_error = exc
+                continue
+            answered += 1
+            counts["api_calls"] += 1
+            counts["credits_a_live_run_would_use"] += 1
+            counts["credits_used"] += 1
+            if run.balance is not None:
+                run.balance -= 1
+            _cache_verdict(email, verdict, run.source)
+            run.prefetched.add(email)
+    counts["prefetch"] = {"asked": len(reserved), "answered": answered, "failed": len(run.failed)}
+    if not answered:
+        run.stopped = "api_error" if isinstance(last_error, neverbounce.NeverBounceError) else "transient_error"
 
 
 def _note(cur, company_id, reason):
@@ -386,6 +460,9 @@ def run(limit=None, dry_run=False, only_test=None, client=None):
                     if run_state.balance is not None and run_state.balance < min(needed, remaining_cap):
                         run_state.stopped = "low_balance"
 
+        if live and not run_state.stopped and settings_verify.CONCURRENCY > 1 and needed > 1:
+            _prefetch(cur, companies, plans, run_state, counts)
+
         for co in companies:
             plan = plans[co["company_id"]]
             if plan["blocked"]:
@@ -398,7 +475,7 @@ def run(limit=None, dry_run=False, only_test=None, client=None):
             outcome = _verify_company(cur, co, plan["contacts"], run_state, counts)
             if outcome == "incomplete":
                 counts["incomplete"] += 1
-                _note(cur, co["company_id"], f"stage 8 stopped early ({run_state.stopped}); will retry")
+                _note(cur, co["company_id"], f"stage 8 stopped early ({run_state.stopped or 'address check failed'}); will retry")
                 continue
             if outcome == "blocked_non_live":
                 counts["blocked"]["non_live_verdict"] = counts["blocked"].get("non_live_verdict", 0) + 1

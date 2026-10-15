@@ -112,9 +112,23 @@ otherwise assume about how a lead-gen pipeline "usually" works.
    `status='contact_done'`. Write to CSV. Advance each exported row to
    `status='exported'`.
 
-## PartnerImport: the Auto Email Campaign pipeline (`campaign/`)
+## PartnerImport, CsvImport and crm.CrmLeads: the Auto Email Campaign pipeline (`campaign/`)
 
-For PartnerImport companies the campaign pipeline is the only thing that owns **`ScrapeStatus`, `ReportStatus`, the nine
+**Scope (updated 2026-10-14, by Japesh).** Sources: **every** `dbo.CRM_Scrapper` row whatever its Source, a NULL one
+too (`AE_ALLOWED_SOURCES`, default `*`; a list narrows it), and `crm.CrmLeads` leads (not deleted, with an email, no
+`AE_` draft yet; mapped to integer ids above 1,000,000,000 by `ae_lead_map`, migration 011). It runs every day at
+**06:30 IST** (`python -m campaign.jobs daily`, scheduled by `campaign/crontab` in the `campaign` compose service):
+take in what is new, stages 2-9 as production, stage 10 writes the `AE_` columns, repeated until nothing moves. What is
+already done is skipped (already in `ae_companies`; a lead already mapped or already carrying an `AE_` draft). NeverBounce
+is live there, within `AE_NEVERBOUNCE_DAILY_CREDIT_CAP` (5,000 a day) and `AE_DRAFTS_PER_DAY` (5,000). The approved email is the fixed text in `templates/email/` with the
+company's own numbers filled in: **no model writes any of it**. Its Unsubscribe button points at `AE_UNSUBSCRIBE_URL`;
+unset, the draft says "[Unsubscribe link: not configured]". Free-mail contacts are allowed (`AE_ALLOW_FREE_MAIL`).
+A `crm.CrmLeads` lead stays the contact whatever their title (`AE_LEAD_SELF_CONTACT`, on). A run against another CRM
+(staging: `CookieConsentDB_Staging`, with its own Postgres database `ae_staging`) must set `AE_EXPECT_CRM_DATABASE` to that
+CRM's name, so `crm_write` refuses any write if the connection is anywhere else (production sets it to `CookieConsentDB`
+in compose); staging has no `ScrapeStatus` column, hence `AE_CRM_NO_SCRAPE_STATUS=1` there.
+
+For PartnerImport and CsvImport companies the campaign pipeline is the only thing that owns **`ScrapeStatus`, `ReportStatus`, the nine
 report columns and the `AE_` draft columns** on the sales team's `dbo.CRM_Scrapper`. It takes each company through ten
 stages (`python -m campaign.jobs prepare`; run commands with `scripts/run.sh`, see the README):
 
@@ -137,7 +151,9 @@ test enforces it):
   `ConsentFinding`, `UpdatedAt`, `DownloadReportUrl`, `ReportGeneratedAt`) and the `AE_Draft*` columns. Every value is
   checked against the format the legacy rows hold; `UpdatedAt`, `ReportGeneratedAt` and `AE_DraftGeneratedAt` are stamped by
   the server (`SYSUTCDATETIME()`), never by Python. Never ALTER.
-- Only `PartnerImport` rows (checked by a read and again in the `WHERE` clause). Never a **test** company, never a
+- Any Source in `dbo.CRM_Scrapper` (a NULL one too), but only a company that is in `ae_companies`. For a `crm.CrmLeads` lead
+  only the `AE_Draft*` columns, to that one lead (never a deleted one); `crm.CrmLeads` has no status or report columns.
+  Never a **test** company, never a
   **legacy** company (one the retired script already reported), never one not in `ae_companies`.
 - **Only when the connected Postgres database is the configured primary (`AE_PRIMARY_DATABASE`, default `consiva`).** A
   throwaway, test or demo database can never drive a real CRM write.
@@ -162,18 +178,16 @@ every customer-facing word is in `report_catalogue.yaml`. The PDF score is the C
 ## Hard constraints -- do not violate these
 
 - **SQL Server writes come only from `campaign/crm_write.py`, within its allowlist** (see the section above):
-  PartnerImport rows only, never test or legacy companies, only from the primary Postgres database, never ALTER.
+  rows of any Source (and `AE_Draft*` on crm.CrmLeads leads), only companies in `ae_companies`, never test or legacy companies, only from
+  the primary Postgres database, never ALTER.
 - **Reports: no model, no screenshots.** Findings, summary and score are deterministic; a report is exactly one page and
   never drops a gap to fit.
-- **Email text: a model writes only two sentences, and only under these rules.** Drafts use OpenAI (config; the self-hosted
-  server is the fallback provider) for exactly two slots, `opening_line` and `finding_sentence`, fed only by the company's
-  scan findings and company-level data. **Never a contact's name, email or phone**; the first name is inserted by code
-  afterwards, and a test asserts the request payload holds none of them. Everything else (subject, structure, the report
-  link and its anchor text, the call to action, the closing) is fixed in `templates/email/`, whose wording is a
-  PLACEHOLDER until the CEO and sales team approve it. Every slot is validated in code (numbers and names must come from
-  the findings, banned words, length, no URLs, emails or legal claims); a bad slot is regenerated once and then replaced by a
-  plain fallback written in code. The title classifier (contact ranking) sends only the job-title text. The CRM person
-  sends and owns all outreach; the pipeline only drafts. Do not add a model call anywhere else without asking.
+- **Email text: fixed, no model.** The approved first email is the fixed template in `templates/email/`; code fills in the
+  first name, company, domain, the company's own scan numbers and the report link. Nothing about a contact goes to any
+  model. The only model call left in the campaign is the title classifier (contact ranking), which sends only the
+  job-title text. The CRM person sends and owns all outreach; the pipeline only drafts. Do not add a model call anywhere
+  else without asking. (`AE_DRAFT_USE_MODEL` can bring the three validated model slots back for a template that has
+  them; it is off.)
 - **No social scraping.** Twitter/X and Reddit were both fully removed from
   scope by the CEO. Don't reintroduce them.
 - **No SearXNG, crt.sh, or Common Crawl** anywhere in discovery. MCA data +

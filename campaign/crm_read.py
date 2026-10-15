@@ -64,6 +64,8 @@ class CrmReader:
 
     def _source_filter(self):
         sources = settings.ALLOWED_SOURCES
+        if "*" in sources:                      # any Source, a NULL one too
+            return "1 = 1", []
         marks = ", ".join(["%s"] * len(sources))
         return f"{self.c['source']} IN ({marks})", list(sources)
 
@@ -72,7 +74,7 @@ class CrmReader:
         c = self.c
         where, params = self._source_filter()
         rows = self._select(
-            f"SELECT {c['company_id']}, {c['website']}, {c['scrape_status']}, {c['report_status']}, "
+            f"SELECT {c['company_id']}, {c['website']}, {'NULL' if settings.NO_SCRAPE_STATUS else c['scrape_status']}, {c['report_status']}, "
             f"{c['company_scale']}, {c['company_name']}, {c['industry']} FROM {c['companies']} WHERE {where} AND {c['company_id']} > %s "
             f"ORDER BY {c['company_id']}", [*params, after_id])
         return [{"id": r[0], "website": r[1], "scrape_status": r[2], "report_status": r[3],
@@ -97,7 +99,7 @@ class CrmReader:
         for chunk in _chunks(company_ids, self.CHUNK):
             marks = ", ".join(["%s"] * len(chunk))
             rows = self._select(
-                f"SELECT {c['company_id']}, {c['scrape_status']}, {c['report_status']} "
+                f"SELECT {c['company_id']}, {'NULL' if settings.NO_SCRAPE_STATUS else c['scrape_status']}, {c['report_status']} "
                 f"FROM {c['companies']} WHERE {c['company_id']} IN ({marks})", chunk)
             out.update({r[0]: (r[1], r[2]) for r in rows})
         return out

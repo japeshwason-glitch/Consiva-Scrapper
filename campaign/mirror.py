@@ -50,7 +50,8 @@ def audit(reader):
     import db
     with db.get_cursor() as cur:
         cur.execute("""SELECT company_id, status FROM ae_companies
-                       WHERE NOT is_test AND status <> 'legacy' ORDER BY company_id""")
+                       WHERE NOT is_test AND status <> 'legacy' AND company_id < %s
+                       ORDER BY company_id""", (settings.LEAD_ID_BASE,))     # leads have no status columns to audit
         rows = [r for r in cur.fetchall() if expected(r["status"]) != (None, None)]
     held = reader.status_columns([r["company_id"] for r in rows])
     out = []

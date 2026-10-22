@@ -70,7 +70,7 @@ R2_REPORTS_BUCKET = os.environ.get("R2_REPORTS_BUCKET", "consiva-reports")
 R2_ENDPOINT = (f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
                if R2_ACCOUNT_ID else None)
 REPORT_PUBLIC_BASE_URL = (os.environ.get("REPORT_PUBLIC_BASE_URL")
-                          or "https://reports-consiva.gignati.com").rstrip("/")
+                          or "https://reports.consiva.tech").rstrip("/")
 REPORT_SALES_CONTACT = os.environ.get("REPORT_SALES_CONTACT", "")
 
 APOLLO_ALLOW_EMAIL_REVEAL =os.environ.get("APOLLO_ALLOW_EMAIL_REVEAL", "0") not in ("0", "false", "False", "")

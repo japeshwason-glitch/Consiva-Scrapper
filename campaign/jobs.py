@@ -67,20 +67,34 @@ def run_stages(only_test, dry_run=False, limit=None, first=2, last=9, write_ae=F
 
 
 def prepare(dry_run=False, limit=None, sample=None, seed=None, production=False, ids=None, adopt_ids=None,
-            write_ae=False, reader=None):
+            write_ae=False, reader=None, batch=None, last_stage=9):
     """
     Intake, then stages 2-9. The test cohort (--sample) is taken in and run through every stage
     (scans, report PDFs, R2 uploads, the model server, NeverBounce per its mode) but never writes to
     the CRM. Production companies are taken in, and only processed by stages 2-8 when
     settings.PRODUCTION_ENABLED or --production says so.
+
+    `batch` (--batch NAME) runs one held-out batch (settings.BATCHES) instead of the normal pipeline: only that
+    batch's Sources are read, its companies are tagged and every stage sees only them. Without it a run never sees
+    a batch company, which is what keeps the scheduled jobs off them.
+
+    `last_stage` (--last-stage N) stops the production run after stage N (2-9), and then the AE write (stage 10)
+    is skipped too. Stage 7 holds a company with no usable job title as held_no_contact, which is final, so a run
+    on contacts that have no titles must stop at 6.
     """
     from . import crm_read, intake
+    if batch is not None and (batch not in settings.BATCHES or sample or adopt_ids):
+        raise SystemExit(f"--batch must name one of {sorted(settings.BATCHES)} and cannot be combined with --sample or --adopt-ids")
+    if not 2 <= last_stage <= 9:
+        raise SystemExit("--last-stage must be between 2 and 9")
+    if last_stage < 9:
+        write_ae = False
     own = reader is None
-    reader = reader or crm_read.CrmReader()
+    reader = reader or crm_read.CrmReader(batch=batch)
     result = {"intake": [], "stages": {}}
     try:
         result["intake"].append(intake.run_intake(reader, dry_run=dry_run, limit=limit,
-                                                    only_ids=set(ids) if ids else None))
+                                                    only_ids=set(ids) if ids else None, batch_name=batch))
         if sample:
             result["intake"].append(intake.run_intake(reader, sample=sample, seed=seed, dry_run=dry_run))
         for r in result["intake"]:
@@ -121,8 +135,8 @@ def prepare(dry_run=False, limit=None, sample=None, seed=None, production=False,
             result["stages"]["test"] = run_stages(True, dry_run, limit)
         if production or settings.PRODUCTION_ENABLED:
             named = list(ids or []) + list(adopt_ids or [])
-            with status.only_companies(named):       # --ids / --adopt-ids mean "only these", in every stage
-                result["stages"]["production"] = run_stages(False, dry_run, limit, write_ae=write_ae)
+            with status.in_batch(batch), status.only_companies(named):   # --ids / --adopt-ids: only these, in every stage
+                result["stages"]["production"] = run_stages(False, dry_run, limit, last=last_stage, write_ae=write_ae)
     else:
         log("stages 2-8 skipped for production: not enabled (AE_PRODUCTION_ENABLED or --production)")
     return result
@@ -209,13 +223,20 @@ def main(argv=None):
                          "contact ranking, NeverBounce and drafting run on them")
     ap.add_argument("--write-ae", action="store_true",
                     help="after drafting, write the draft into the CRM AE_ columns (production companies only)")
+    ap.add_argument("--batch", choices=sorted(settings.BATCHES),
+                    help="run this held-out batch (its Sources only; its companies are tagged and invisible to the "
+                         "scheduled jobs) instead of the normal pipeline")
+    ap.add_argument("--last-stage", type=int, default=9, choices=range(2, 10), metavar="N",
+                    help="stop the production run after stage N (2-9); the AE write is then skipped as well. "
+                         "Use 6 to stop at the report, before contact ranking")
     ap.add_argument("--production", action="store_true",
                     help="also run stages 2-8 for production companies (otherwise only when AE_PRODUCTION_ENABLED=1)")
     args = ap.parse_args(argv)
     options = {"dry_run": args.dry_run}
     if args.job == "prepare":
         options.update(limit=args.limit, sample=args.sample, seed=args.seed, production=args.production, ids=args.ids,
-                       adopt_ids=args.adopt_ids, write_ae=args.write_ae)
+                       adopt_ids=args.adopt_ids, write_ae=args.write_ae, batch=args.batch,
+                       last_stage=args.last_stage)
     outcome = run_job(args.job, **options)
     log(f"{args.job}: {outcome}")
     return 0

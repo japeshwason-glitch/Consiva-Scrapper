@@ -199,6 +199,9 @@ def _process(run, cur, company):
 
 def run(limit=None, dry_run=False, only_test=None, classify=None):
     """One pass over `reported` companies. Returns the counts dict (see _Run.counts)."""
+    from . import express
+    if express.active():                  # a held-out express batch: the CRM's primary contact, no ranking
+        return express.rank(limit=limit, dry_run=dry_run, only_test=only_test)
     state = _Run(dry_run, classify)
     with status.claim("reported", limit, is_test=only_test) as (cur, companies):
         for company in companies:

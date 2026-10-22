@@ -18,6 +18,27 @@ def _bool(raw):
 # "*" = any Source in dbo.CRM_Scrapper, a NULL one too. A list ("PartnerImport,CsvImport") narrows what intake reads.
 ALLOWED_SOURCES = tuple(s.strip() for s in _env("AE_ALLOWED_SOURCES", "*").split(","))
 
+# Held-out batches: "name=source,source;name2=source". A company of one of these Sources is never taken in or
+# processed by the scheduled jobs (daily, housekeeping) or any run without --batch; only `prepare --batch NAME` takes
+# it in (tagging ae_companies.batch) and processes it. Sources are compared case-insensitively.
+def _parse_batches(raw):
+    out = {}
+    for part in (raw or "").split(";"):
+        name, _, sources = part.partition("=")
+        srcs = tuple(s.strip().lower() for s in sources.split(",") if s.strip())
+        if name.strip() and srcs:
+            out[name.strip()] = srcs
+    return out
+
+
+BATCHES = _parse_batches(_env("AE_BATCHES", "gf_clutch=goodfirms,clutch;goodfirms=goodfirms;clutch=clutch"))
+HELD_OUT_SOURCES = tuple(sorted({s for srcs in BATCHES.values() for s in srcs}))
+
+# Express batches skip contact ranking (stage 7 takes the CRM's primary contact) and NeverBounce (stage 8 records the
+# address as not verified); stage 9 drafts it. Only a company tagged with one of these batches can be drafted on an
+# unverified address: a production company outside them still needs a live NeverBounce verdict.
+EXPRESS_BATCHES = tuple(b.strip() for b in _env("AE_EXPRESS_BATCHES", "goodfirms,clutch,gf_clutch").split(",") if b.strip())
+
 # Production intake takes every PartnerImport company not yet in ae_companies. Those
 # that already carry a ReportStatus were processed by the retired report script and
 # are imported once as `legacy`. This pipeline owns ScrapeStatus and ReportStatus now.
@@ -40,7 +61,7 @@ NEVERBOUNCE_DAILY_CREDIT_CAP = _env("AE_NEVERBOUNCE_DAILY_CREDIT_CAP", 5000, int
 DRAFTS_PER_DAY = _env("AE_DRAFTS_PER_DAY", 5000, int)      # in step with the NeverBounce cap, so verified companies are not left waiting
 FALLBACK_CONTACTS = _env("AE_FALLBACK_CONTACTS", 2, int)
 SCAN_RETRIES = _env("AE_SCAN_RETRIES", 2, int)            # attempts = retries + 1
-SCAN_RETRY_DELAY_MINUTES = _env("AE_SCAN_RETRY_DELAY_MINUTES", 60, int)
+SCAN_RETRY_DELAY_MINUTES = _env("AE_SCAN_RETRY_DELAY_MINUTES", 15, int)
 INTAKE_BATCH_SIZE = _env("AE_INTAKE_BATCH_SIZE", 500, int)
 
 # Production companies are NOT processed by stages 2-8 until this is switched on (AE_PRODUCTION_ENABLED=1)
@@ -57,7 +78,7 @@ SCAN_REUSE_DAYS = REPORT_FRESH_DAYS                         # a scan younger tha
 SCAN_CONCURRENCY = _env("AE_SCAN_CONCURRENCY", 6, int)
 SCAN_TIMEOUT_S = _env("AE_SCAN_TIMEOUT_S", 150, int)        # one homepage, killed hard past this
 SCANS_PER_RUN = _env("AE_SCANS_PER_RUN", 60, int)           # bounded work per run
-SCAN_RETRY_BACKOFF_MINUTES = (15, 60)                       # wait before retry 1, retry 2
+SCAN_RETRY_BACKOFF_MINUTES = (15, 15)                       # wait before retry 1, retry 2 (the second was 60 until 2026-10-19)
 RENDER_TIMEOUT_S = _env("AE_RENDER_TIMEOUT_S", 60, int)
 
 # --- email address checks -----------------------------------------------------------
@@ -79,7 +100,7 @@ CRM = {
     "report_url": "DownloadReportUrl", "gap_score": "GapScore", "report_generated": "ReportGeneratedAt",
     "scrape_status": "ScrapeStatus", "report_status": "ReportStatus",
     "contact_company_id": "CompanyId", "contact_id": "Id", "contact_email": "Email",
-    "contact_title": "JobTitle", "contact_first_name": "FirstName", "contact_deleted": "IsDeleted",
+    "contact_title": "JobTitle", "contact_first_name": "FirstName", "contact_primary": "IsPrimary", "contact_deleted": "IsDeleted",
     "activity_company_id": "CompanyId", "activity_type": "Type", "activity_deleted": "IsDeleted",
     "event_type": "EventType", "event_email": "RecipientEmail",
 }

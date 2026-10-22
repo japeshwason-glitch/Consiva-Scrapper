@@ -4,10 +4,10 @@
   fills them when it sends (AE_UNSUBSCRIBE_URL is not used by this template). The signature is whatever the CRM user's own signature adds. Nothing sends from here; the CRM person sends.
   Autoescape is on. A bullet appears only when it is true for that company (tracking cookies, no banner, third parties).
 -#}
-{%- set template_version = "A-1.0" -%}
-{%- set subject = "Tracking cookies are loading on " ~ domain ~ " before visitors choose" -%}
-<p>{% if first_name %}Hi {{ first_name }},{% else %}Hello,{% endif %}</p>
-<p>I was looking at {% if company != domain %}{{ company }}&rsquo;s website, {% else %}your website, {% endif %}{{ domain }}, and noticed a few things worth flagging as India&rsquo;s DPDP requirements come into focus.</p>
+{%- set template_version = "B-1.2" -%}
+{%- set subject = "A short consent report for " ~ domain ~ "" -%}
+<p>{% if first_name %}Hi {{ first_name }},{% elif company != domain %}Hello {{ company }} team,{% else %}Hello,{% endif %}</p>
+<p>I was looking at {% if company != domain %}{{ company_possessive }} website, {% else %}your website, {% endif %}{{ domain }}, and noticed a few things worth flagging as India&rsquo;s DPDP requirements come into focus.</p>
 <p>Our scan picked up:</p>
 <ul>
 {% if n_tracking %}<li>{{ n_tracking }} tracking tool{{ '' if n_tracking == 1 else 's' }} running before visitor consent</li>

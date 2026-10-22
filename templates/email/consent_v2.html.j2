@@ -1,0 +1,26 @@
+{#-
+  The approved first-email text, version 2 (supplied by Japesh, 2026-10-19), filled with the company's own numbers; no model
+  writes any of it. One template for every band (the band stays on the draft as AE_DraftBand). Nothing sends from here; the CRM
+  person sends, and the CRM tool fills the literal {{UnsubscribeButton}} merge field when it does. The signature is whatever the CRM
+  user's own signature adds. A bullet appears only when it is true for that company (see draft_templates._bullets).
+  Autoescape is on. Buttons are table-based links with inline styles, which survive Gmail and Outlook.
+  The previous four band templates are kept in archive_v1/.
+-#}
+{%- set template_version = "V2-1.0" -%}
+{%- set subject = "We scanned " ~ (company_possessive ~ " website" if company != domain else "your website") ~ "—here are the DPDP Privacy gaps we found" -%}
+{%- macro button(url, label) -%}
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:18px 0;"><tr><td align="center" bgcolor="#1a56db" style="border-radius:6px;"><a href="{{ url }}" style="display:inline-block;padding:13px 24px;font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;line-height:1.2;color:#ffffff;text-decoration:none;border-radius:6px;">{{ label }}</a></td></tr></table>
+{%- endmacro -%}
+<p>{% if company != domain %}Hello {{ company }} team,{% else %}Hello,{% endif %}</p>
+<p>With India&rsquo;s DPDP compliance obligations approaching, we reviewed {{ domain }} to identify potential privacy gaps and help your team prepare.</p>
+<p>Our scan identified:</p>
+<ul>
+{% for b in bullets %}<li>{{ b }}</li>
+{% endfor %}</ul>
+<p>These findings are worth addressing now. The DPDP Act provides for penalties of up to &#8377;250 crore for certain contraventions. And adherence to consent management compliance is required by 13 November 2026.</p>
+<p>Consiva.ai helps businesses manage website consent, Data Principal Rights requests, breach workflows and compliance evidence through one India-focused platform.</p>
+<p>Start with your website today. Create your account, configure consent controls and begin addressing the gaps identified in your scan.</p>
+{{ button("https://consiva.ai/", "Fix My Website&rsquo;s Consent"|safe) }}
+<p>For enterprise requirements spanning multiple websites, digital assets, ERP, CRM and other business systems, <a href="https://consiva.ai/contact">request a consultation</a> with our team to discuss a tailored compliance programme.</p>
+{{ button(report_url, "View your website scan") }}
+<p>{% raw %}{{UnsubscribeButton}}{% endraw %}</p>

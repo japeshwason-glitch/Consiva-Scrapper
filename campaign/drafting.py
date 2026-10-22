@@ -6,7 +6,8 @@ Input gate (a company that fails stays `verified` and is counted, so it can be r
   * the chosen contact is OK or RISKY, passed the free checks, and is not in ae_suppression now
     (suppressed since verification -> the company becomes `suppressed`);
   * in production the contact's verdict came from a LIVE NeverBounce call. A mock (or unknown) verdict is
-    never drafted for a production company: the check is in draft_one() itself, not only in the loop;
+    never drafted for a production company: the check is in draft_one() itself, not only in the loop. The one
+    exception is a company of an express batch (campaign/express.py), whose address was recorded as 'skipped';
   * a report was generated (report_url) and is at most settings.REPORT_FRESH_DAYS old;
   * the daily cap (settings.DRAFTS_PER_DAY, IST calendar day) is not used up.
 
@@ -23,7 +24,7 @@ import psycopg2.extras
 
 import db
 
-from . import draft_findings, draft_model, draft_templates, draft_validate, settings, status
+from . import draft_findings, draft_model, draft_templates, draft_validate, express, settings, status
 from . import settings_drafts as cfg
 
 SLOTS = draft_validate.SLOTS
@@ -40,9 +41,22 @@ class DraftBlocked(Exception):
 
 
 def drafts_today(cur):
-    cur.execute("""SELECT COUNT(*) n FROM ae_drafts
-                   WHERE (generated_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date""")
+    """Drafts made today by the normal pipeline. Held-out batch drafts use no NeverBounce credit and are not counted."""
+    cur.execute("""SELECT COUNT(*) n FROM ae_drafts d JOIN ae_companies c USING (company_id)
+                   WHERE c.batch IS NULL
+                     AND (d.generated_at AT TIME ZONE 'Asia/Kolkata')::date = (NOW() AT TIME ZONE 'Asia/Kolkata')::date""")
     return cur.fetchone()["n"]
+
+
+def verdict_usable(company, contact):
+    """
+    May a production company be drafted on this contact's verdict? Only on a LIVE NeverBounce verdict, except that a
+    company of an express batch (settings.EXPRESS_BATCHES) may be drafted on an address NeverBounce was never asked
+    about (nb_source 'skipped'). A mock or unknown verdict is never usable, in any batch.
+    """
+    if contact is None:
+        return False
+    return contact["nb_source"] == "live" or (contact["nb_source"] == "skipped" and express.is_express(company))
 
 
 def _contact(cur, company):
@@ -54,7 +68,7 @@ def gate_reason(cur, company, contact):
     """Why this company cannot be drafted right now, or None. 'suppressed' means move it to `suppressed`."""
     if contact is None or not contact["check_passed"]:
         return "no_contact"
-    if not company["is_test"] and contact["nb_source"] != "live":
+    if not company["is_test"] and not verdict_usable(company, contact):
         return "mock_verdict"
     if contact["nb_decision"] not in ("OK", "RISKY"):
         return "contact_not_verified"
@@ -105,7 +119,7 @@ def draft_one(cur, company, generator):
     Refuses (MockVerdictRefused) a production company whose chosen contact's verdict is not LIVE.
     """
     contact = _contact(cur, company)
-    if not company["is_test"] and (contact is None or contact["nb_source"] != "live"):
+    if not company["is_test"] and not verdict_usable(company, contact):
         raise MockVerdictRefused(f"company {company['company_id']}: the chosen contact's NeverBounce verdict "
                                  f"is not from a live call; a production company is never drafted on it")
     reason = gate_reason(cur, company, contact)
@@ -125,7 +139,8 @@ def draft_one(cur, company, generator):
         tokens = {"input_tokens": 0, "output_tokens": 0}
         provider, model, prompt_version = "fixed", "none", cfg.FIXED_PROMPT_VERSION
     facts = {"company": findings["company_name"], "n_tracking": findings["tracking_cookie_count"],
-             "no_banner": not findings["cookie_banner"], "n_third": findings["third_party_count"]}
+             "no_banner": not findings["cookie_banner"], "n_third": findings["third_party_count"],
+             "no_policy": not findings["privacy_policy"]}
     mail = draft_templates.render(company["band"], slots["opening_line"], slots["finding_sentence"],
                                   slots["impact_sentence"], contact["first_name"], company["report_url"],
                                   company["domain"], facts)
@@ -167,6 +182,8 @@ def run(limit=None, dry_run=False, only_test=None, generator=None):
     blocked = Counter()
     with status.claim("verified", settings.DRAFTS_PER_DAY * 4, is_test=only_test) as (cur, rows):
         left = settings.DRAFTS_PER_DAY - drafts_today(cur)
+        if express.active():                     # no NeverBounce credit is spent here, so the daily cap does not apply
+            left = len(rows)
         if limit:
             left = min(left, limit)
         counts["claimed"] = len(rows)

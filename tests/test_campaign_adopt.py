@@ -13,7 +13,7 @@ from campaign import adopt, crm_write, draft_templates, draft_writer, settings
 from tests import campaign_fixtures as fx
 from tests.test_campaign import DbCase, FakeCrm, FakeCrmConn, crm_with, writer
 
-URL = "https://reports-consiva.gignati.com/r/0123456789abcdef0123456789abcdef.pdf"
+URL = "https://reports.consiva.tech/r/0123456789abcdef0123456789abcdef.pdf"
 
 
 class AdoptCrm(FakeCrm):

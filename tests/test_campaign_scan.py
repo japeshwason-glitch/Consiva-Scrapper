@@ -163,15 +163,15 @@ LEGACY = {   # real rows from dbo.CRM_Scrapper, 2026-10-12
     3769: dict(GapScore=0, TrackersPreConsent=16, ThirdPartiesCount=6, CookieBanner="present",
                CollectsViaForm="email — no consent checkbox; submitted to admin.hk.co",
                ConsentFinding="No consent management platform detected; 16 of 16 cookies are tracking cookies set before consent: CLID, _gcl_au, _ga_L6NJDNV4MS, _ga, _ga_PM3QG5MDJ4, _fbp (+10 more); data sent to 6 third-party domains before consent: bing.com, c.bing.com, c.clarity.ms, clarity.ms, facebook.com (+1 more); longest tracker lifetime 399 days, 8 trackers persist beyond 180 days; cookie banner present; privacy/cookie policy linked; collects personal data via 1 web form(s) (email) with no consent checkbox and no privacy link on the form submitted to third-party host(s): admin.hk.co.",
-               DownloadReportUrl="https://reports-consiva.gignati.com/r/8e26f23a0feafc68e46b3e6de679e930.pdf"),
+               DownloadReportUrl="https://reports.consiva.tech/r/8e26f23a0feafc68e46b3e6de679e930.pdf"),
     3776: dict(GapScore=40, TrackersPreConsent=4, ThirdPartiesCount=0, CookieBanner="none",
                CollectsViaForm="name — no consent checkbox",
                ConsentFinding="No consent management platform detected; 4 of 6 cookies are tracking cookies set before consent: _gid, _gat_gtag_UA_112430567_1, _ga_YSP0F4MYLK, _ga; longest tracker lifetime 399 days, 2 trackers persist beyond 180 days; no cookie banner; privacy/cookie policy linked; collects personal data via 1 web form(s) (name) with no consent checkbox.",
-               DownloadReportUrl="https://reports-consiva.gignati.com/r/4f359c0d5a5a6a6d067d81d6be0e0c2b.pdf"),
+               DownloadReportUrl="https://reports.consiva.tech/r/4f359c0d5a5a6a6d067d81d6be0e0c2b.pdf"),
     3698: dict(GapScore=70, TrackersPreConsent=7, ThirdPartiesCount=1, CookieBanner="present",
                CollectsViaForm=None,
                ConsentFinding="CMP detected: OneTrust; 7 of 20 cookies are tracking cookies set before consent: __Secure-YNID, YSC, __Secure-ROLLOUT_TOKEN, VISITOR_INFO1_LIVE, VISITOR_PRIVACY_METADATA, _ga (+1 more); data sent to 1 third-party domains before consent: youtube.com; longest tracker lifetime 399 days, 2 trackers persist beyond 180 days; cookie banner present; privacy/cookie policy linked.",
-               DownloadReportUrl="https://reports-consiva.gignati.com/r/dcfa17f8cfa20d93961e58ce825915fd.pdf"),
+               DownloadReportUrl="https://reports.consiva.tech/r/dcfa17f8cfa20d93961e58ce825915fd.pdf"),
 }
 LEGACY_NO_GAP = {   # rows 3766 and 3770, ReportStatus no_gap
     3766: dict(GapScore=100, TrackersPreConsent=0, ThirdPartiesCount=0, CookieBanner="none", CollectsViaForm=None,
@@ -243,7 +243,7 @@ class CrmReportColumnFormats(unittest.TestCase):
                     config.REPORT_PUBLIC_BASE_URL + "/r/short.pdf",
                     config.REPORT_PUBLIC_BASE_URL + "/x/0123456789abcdef0123456789abcdef.pdf",
                     config.REPORT_PUBLIC_BASE_URL + "/r/0123456789ABCDEF0123456789ABCDEF.pdf",
-                    "http://reports-consiva.gignati.com/r/0123456789abcdef0123456789abcdef.pdf",
+                    "http://reports.consiva.tech/r/0123456789abcdef0123456789abcdef.pdf",
                     GOOD_URL + "?x=1", "javascript:alert(1)", ""):
             with self.assertRaises(crm_write.CrmWriteRefused, msg=bad):
                 self.check(DownloadReportUrl=bad)

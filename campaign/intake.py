@@ -107,9 +107,10 @@ def promote_to_test(cur, company_id):
 
 def _insert_contacts(cur, contacts, counts):
     for ct in contacts:
-        cur.execute("""INSERT INTO ae_contacts (contact_id, company_id, email, job_title, first_name)
-                       VALUES (%s, %s, %s, %s, %s) ON CONFLICT (contact_id) DO NOTHING RETURNING id""",
-                    (ct["contact_id"], ct["company_id"], ct["email"].strip(), ct["job_title"], ct.get("first_name")))
+        cur.execute("""INSERT INTO ae_contacts (contact_id, company_id, email, job_title, first_name, is_primary)
+                       VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (contact_id) DO NOTHING RETURNING id""",
+                    (ct["contact_id"], ct["company_id"], ct["email"].strip(), ct["job_title"], ct.get("first_name"),
+                     ct.get("is_primary")))
         if cur.fetchone():
             counts["contacts_new"] += 1
             counts["contacts_business_email"] += is_business_email(ct["email"])
@@ -145,13 +146,18 @@ def _run_test_cohort(reader, sample, seed, limit, dry_run, counts):
 
 
 def run_intake(reader, *, sample=None, seed=None, limit=None, batch_size=None, dry_run=False,
-               use_watermark=True, exclude_previously_emailed=None, only_ids=None):
+               use_watermark=True, exclude_previously_emailed=None, only_ids=None, batch_name=None):
     """
     One intake pass. Returns a counts dict:
       cohort, companies_new, legacy_new, legacy_by_report_status, by_status, contacts_new,
       contacts_business_email, held_already_contacted, suppression_new.
     With dry_run nothing is written to Postgres and the same counts are computed.
+
+    `batch_name` names a held-out batch (settings.BATCHES): the reader must be that batch's reader, every company taken
+    in is tagged with it (ae_companies.batch), and it keeps its own watermark. Without it companies are untagged.
     """
+    if batch_name is not None and (sample is not None or getattr(reader, "batch", batch_name) != batch_name):
+        raise ValueError("a batch intake needs a reader of the same batch and no --sample")
     test = sample is not None
     batch_size = batch_size or settings.INTAKE_BATCH_SIZE
     if exclude_previously_emailed is None:
@@ -165,7 +171,8 @@ def run_intake(reader, *, sample=None, seed=None, limit=None, batch_size=None, d
 
     by_status, legacy_by_rs = Counter(), Counter()
     existing = _existing_ids()
-    after = get_watermark(WATERMARK_JOB) if use_watermark else 0
+    watermark_job = WATERMARK_JOB if batch_name is None else f"{WATERMARK_JOB}:{batch_name}"
+    after = get_watermark(watermark_job) if use_watermark else 0
     if only_ids is not None:
         after = 0              # a selection by id must not depend on, or move, the watermark
     todo = [c for c in reader.companies_after(after) if c["id"] not in existing
@@ -204,13 +211,13 @@ def run_intake(reader, *, sample=None, seed=None, limit=None, batch_size=None, d
                 for c in batch:
                     first = "legacy" if c["report_status"] else "pending"
                     cur.execute("""INSERT INTO ae_companies (company_id, is_test, domain, status, status_reason,
-                                                             website, company_scale, company_name, industry)
-                                   VALUES (%s, FALSE, %s, %s, %s, %s, %s, %s, %s)
+                                                             website, company_scale, company_name, industry, batch)
+                                   VALUES (%s, FALSE, %s, %s, %s, %s, %s, %s, %s, %s)
                                    ON CONFLICT (company_id) DO NOTHING RETURNING company_id""",
                                 (c["id"], domain_of(c["website"]), first,
                                  plan(c)[1] if first == "legacy" else NEW,
                                  (c["website"] or None), c.get("company_scale"), c.get("company_name"),
-                                 (c.get("industry") or None)))
+                                 (c.get("industry") or None), batch_name))
                     if cur.fetchone():
                         new_ids.add(c["id"])
                 for c in batch:
@@ -228,7 +235,7 @@ def run_intake(reader, *, sample=None, seed=None, limit=None, batch_size=None, d
                     cur.execute("""INSERT INTO ae_watermark (job_name, last_crm_id) VALUES (%s, %s)
                                    ON CONFLICT (job_name) DO UPDATE
                                    SET last_crm_id = GREATEST(ae_watermark.last_crm_id, EXCLUDED.last_crm_id),
-                                       updated_at = NOW()""", (WATERMARK_JOB, max(c["id"] for c in batch)))
+                                       updated_at = NOW()""", (watermark_job, max(c["id"] for c in batch)))
 
     counts["by_status"] = dict(by_status)
     counts["legacy_new"] = by_status.get("legacy", 0)
@@ -243,12 +250,16 @@ def backfill_details(reader):
     first name and a company's industry. Only blanks are filled; nothing already there is overwritten.
     Returns {"first_names": n, "industries": n}. Reads the CRM, writes Postgres only.
     """
+    own_batch = getattr(reader, "batch", None)          # a reader only backfills the companies of its own batch
     with db.get_cursor() as cur:
-        cur.execute("SELECT company_id FROM ae_companies WHERE industry IS NULL")
+        cur.execute("SELECT company_id FROM ae_companies WHERE industry IS NULL AND batch IS NOT DISTINCT FROM %s",
+                    (own_batch,))
         no_industry = {r["company_id"] for r in cur.fetchall()}
-        cur.execute("SELECT DISTINCT company_id FROM ae_contacts WHERE first_name IS NULL")
+        cur.execute("""SELECT DISTINCT ct.company_id FROM ae_contacts ct JOIN ae_companies co USING (company_id)
+                       WHERE (ct.first_name IS NULL OR ct.is_primary IS NULL) AND co.batch IS NOT DISTINCT FROM %s""",
+                    (own_batch,))
         no_name = [r["company_id"] for r in cur.fetchall()]
-    done = {"first_names": 0, "industries": 0}
+    done = {"first_names": 0, "industries": 0, "primaries": 0}
     if no_industry:
         with db.get_cursor() as cur:
             for c in reader.companies_after(0):
@@ -257,12 +268,17 @@ def backfill_details(reader):
                                 (c["industry"].strip(), c["id"]))
                     done["industries"] += cur.rowcount
     if no_name:
-        names = {ct["contact_id"]: ct["first_name"] for ct in reader.contacts(no_name) if ct.get("first_name")}
+        crm_contacts = reader.contacts(no_name)
         with db.get_cursor() as cur:
-            for contact_id, name in names.items():
-                cur.execute("UPDATE ae_contacts SET first_name = %s WHERE contact_id = %s AND first_name IS NULL",
-                            (name, contact_id))
-                done["first_names"] += cur.rowcount
+            for ct in crm_contacts:
+                if ct.get("first_name"):
+                    cur.execute("UPDATE ae_contacts SET first_name = %s WHERE contact_id = %s AND first_name IS NULL",
+                                (ct["first_name"], ct["contact_id"]))
+                    done["first_names"] += cur.rowcount
+                if ct.get("is_primary") is not None:
+                    cur.execute("UPDATE ae_contacts SET is_primary = %s WHERE contact_id = %s AND is_primary IS NULL",
+                                (ct["is_primary"], ct["contact_id"]))
+                    done["primaries"] += cur.rowcount
     return done
 
 

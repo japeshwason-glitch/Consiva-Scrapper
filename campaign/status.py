@@ -141,9 +141,34 @@ def only_companies(ids):
         _SCOPE = previous
 
 
+_BATCH = None        # the named batch this run is limited to, or None for the normal pipeline
+
+
+@contextmanager
+def in_batch(name):
+    """
+    Limits every stage's company selection to the companies tagged with this batch (prepare --batch). Outside a
+    batch run, and in every scheduled job, selection is limited to untagged companies (batch IS NULL), so a batch
+    company is never claimed, scanned, written or drafted by anything but its own batch run.
+    """
+    global _BATCH
+    previous, _BATCH = _BATCH, name
+    try:
+        yield
+    finally:
+        _BATCH = previous
+
+
 def scope_sql():
-    """(" AND company_id = ANY(%s)", [ids]) while a scope is active, else ("", [])."""
-    return (" AND company_id = ANY(%s)", [sorted(_SCOPE)]) if _SCOPE else ("", [])
+    """
+    (sql, params) to append to a WHERE on ae_companies. Always limits to the active batch (batch = %s), or to the
+    untagged companies (batch IS NULL) when no batch run is active; and, while a scope is active, to its company ids.
+    """
+    sql, params = (" AND batch = %s", [_BATCH]) if _BATCH else (" AND batch IS NULL", [])
+    if _SCOPE:
+        sql += " AND company_id = ANY(%s)"
+        params.append(sorted(_SCOPE))
+    return sql, params
 
 
 @contextmanager

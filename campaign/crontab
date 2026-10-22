@@ -3,11 +3,13 @@
 # advisory lock and exits if another run holds it, so overlapping runs are harmless.
 # Add --dry-run to a line to watch it without writing anything.
 
-# daily: 06:30 IST. The whole pipeline for every allowed source (PartnerImport, CsvImport) and crm.CrmLeads:
+# daily: every 15 minutes (it was 06:30 IST once a day until 2026-10-19), so new CRM data is picked up within 15 minutes.
+# The whole pipeline for every allowed source (not the held-out GoodFirms/Clutch batches) and crm.CrmLeads:
 # intake, free checks, domain, scan, score gate, report, contact ranking, NeverBounce, drafting, and the AE_
 # write. It repeats until nothing moves (or AE_DAILY_MAX_HOURS), and skips whatever is already done.
-# NeverBounce is live in this service (docker-compose.yml), with its daily credit cap (AE_NEVERBOUNCE_DAILY_CREDIT_CAP).
-30 6 * * * cd /app && python -m campaign.jobs daily
+# A run that is still going when the next tick comes makes that tick exit at once (the job's advisory lock), so runs never
+# overlap. NeverBounce is live in this service (docker-compose.yml), with its daily credit cap (AE_NEVERBOUNCE_DAILY_CREDIT_CAP).
+*/15 * * * * cd /app && python -m campaign.jobs daily
 
 # housekeeping: 02:00 IST. Reconciliation (takes in anything intake missed) and the read-only mirror audit.
 0 2 * * * cd /app && python -m campaign.jobs housekeeping

@@ -27,7 +27,7 @@ from campaign import (crm_write, draft_findings, draft_model, draft_review, draf
 from tests import campaign_fixtures as fx
 from tests.test_campaign import DbCase, FakeCrmConn, crm_with, writer
 
-REPORT_URL = "https://reports-consiva.gignati.com/r/0123456789abcdef0123456789abcdef.pdf"
+REPORT_URL = "https://reports.consiva.tech/r/0123456789abcdef0123456789abcdef.pdf"
 FIRST_NAME = "Zorbatha"            # a name that cannot occur by accident in any generated text
 EMAIL = "zorbatha.quimby@acme.example.com"
 
@@ -218,9 +218,11 @@ class Templates(unittest.TestCase):
         args.update(kw)
         return draft_templates.render(band, **args)
 
-    def test_there_is_one_template_file_per_band_in_the_templates_folder(self):
+    def test_one_template_file_serves_every_band_and_the_old_ones_are_archived(self):
+        self.assertTrue((ROOT / "templates" / "email" / draft_templates.TEMPLATE_FILE).exists())
         for band in "ABCD":
-            self.assertTrue((ROOT / "templates" / "email" / f"band_{band.lower()}.html.j2").exists(), band)
+            self.assertEqual(draft_templates._path(band).name, draft_templates.TEMPLATE_FILE, band)
+            self.assertTrue((ROOT / "templates" / "email" / "archive_v1" / f"band_{band.lower()}.html.j2").exists(), band)
 
     def test_every_template_is_marked_as_a_placeholder_and_versioned(self):
         for band in "ABCD":
@@ -286,7 +288,7 @@ class Templates(unittest.TestCase):
 
     def test_the_template_version_changes_when_the_template_file_changes(self):
         v1 = draft_templates.template_version("A")
-        path = ROOT / "templates" / "email" / "band_a.html.j2"
+        path = ROOT / "templates" / "email" / draft_templates.TEMPLATE_FILE
         with mock.patch.object(draft_templates, "_source", lambda band: path.read_text() + "\n{# edited #}"):
             self.assertNotEqual(draft_templates.template_version("A"), v1)
 
@@ -657,12 +659,13 @@ class DraftOutput(DraftCase):
         self.assertEqual(self.draft_row(1)["draft_status"], "ready")
         self.assertEqual(self.draft_row(2)["draft_status"], "risky")
 
-    def test_the_band_comes_from_the_company_and_picks_the_template(self):
+    def test_the_band_comes_from_the_company_and_every_band_uses_the_one_template(self):
         for i, band in enumerate("ABCD", start=1):
             self.verified(i, band=band)
         self.run_stage()
-        versions = {self.draft_row(i)["band"]: self.draft_row(i)["template_version"] for i in range(1, 5)}
-        self.assertEqual({b: v[0] for b, v in versions.items()}, {b: b for b in "ABCD"})
+        rows = {i: self.draft_row(i) for i in range(1, 5)}
+        self.assertEqual({r["band"] for r in rows.values()}, set("ABCD"))              # the band still labels the draft
+        self.assertEqual({r["template_version"] for r in rows.values()}, {draft_templates.template_version("A")})
 
     def test_the_company_moves_to_drafted_with_a_reason(self):
         self.verified(1)

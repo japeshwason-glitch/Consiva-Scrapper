@@ -117,7 +117,7 @@ dropped.** The overflow is measured in the browser -- the box has
 | Bucket | `R2_REPORTS_BUCKET` (`consiva-reports`) |
 | Endpoint | `https://<R2_ACCOUNT_ID>.r2.cloudflarestorage.com`, region `auto` |
 | Object key | `r/<secrets.token_hex(16)>.pdf` -- random, not guessable from a company |
-| Public URL | `REPORT_PUBLIC_BASE_URL + "/" + key`, e.g. `https://reports-consiva.gignati.com/r/3f9c....pdf` |
+| Public URL | `REPORT_PUBLIC_BASE_URL + "/" + key`, e.g. `https://reports.consiva.tech/r/3f9c....pdf` |
 | Headers | `Content-Type: application/pdf`, `Content-Disposition: inline; filename="Consiva-DPDP-Readiness-<domain>.pdf"` |
 
 The bucket is connected to the custom domain, so the URL path equals the key.

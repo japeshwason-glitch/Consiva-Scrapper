@@ -38,7 +38,7 @@ MIGRATION = ROOT / "migrations" / "008_auto_email_campaign.sql"
 # The report tables (006, 007) plus both campaign migrations, in order.
 MIGRATIONS = [ROOT / "migrations" / n for n in ("006_reports.sql", "007_report_scan_crm_values.sql",
                                                  "008_auto_email_campaign.sql", "009_campaign_stages.sql",
-                                                 "010_drafting.sql")]
+                                                 "010_drafting.sql", "012_batches.sql", "013_express.sql")]
 
 
 # --- test database ---------------------------------------------------------------
@@ -1078,8 +1078,8 @@ class Intake(DbCase):
                              [("a@acme.example.com", "Asha"), ("b@acme.example.com", "Kept")])
             cur.execute("SELECT industry FROM ae_companies")
             self.assertEqual(cur.fetchone()["industry"], "Textiles (new)")
-        self.assertEqual(filled, {"first_names": 1, "industries": 1})
-        self.assertEqual(intake.backfill_details(self.crm), {"first_names": 0, "industries": 0})
+        self.assertEqual(filled, {"first_names": 1, "industries": 1, "primaries": 0})
+        self.assertEqual(intake.backfill_details(self.crm), {"first_names": 0, "industries": 0, "primaries": 0})
 
     def test_backfill_reads_the_crm_and_writes_only_postgres(self):
         self.crm.company(1)

@@ -160,8 +160,23 @@ def _check_columns(columns):
             raise CrmWriteRefused(f"{col}={str(value)[:80]!r} is not in the format the CRM holds for this column")
 
 
-def _guard(company_id):
-    """Looks the company up in ae_companies; raises unless it is a real, non-test, non-legacy one."""
+def _check_held_out(company_id, source, allow_held_out=False):
+    """Refuses a held-out batch row (GoodFirms, Clutch) unless the run is inside that batch or the caller said so."""
+    from . import status as _status                  # status imports this module, so not at the top
+    name = (source or "").strip().lower()
+    if allow_held_out or name not in settings.HELD_OUT_SOURCES:
+        return
+    batch = _status._BATCH
+    if batch is None or name not in settings.BATCHES.get(batch, ()):
+        raise CrmWriteRefused(f"CRM row {company_id} is a held-out batch row (Source={source!r}); only a run of its own batch "
+                              f"(prepare --batch) may write it, not {'a run outside any batch' if batch is None else 'batch ' + batch}")
+
+
+def _guard(company_id, allow_legacy=False):
+    """
+    Looks the company up in ae_companies; raises unless it is a real, non-test, non-legacy one. allow_legacy lets a legacy
+    company through (see update_company(legacy_link_only=True)); a test company and one not in ae_companies never pass.
+    """
     with db.get_cursor() as cur:
         cur.execute("SELECT is_test, status FROM ae_companies WHERE company_id = %s", (company_id,))
         row = cur.fetchone()
@@ -169,25 +184,39 @@ def _guard(company_id):
         raise CrmWriteRefused(f"company {company_id} is not in ae_companies; refusing to write it")
     if row["is_test"]:
         raise TestCompanyRefused(f"company {company_id} is a test company; nothing about it reaches the CRM")
-    if row["status"] == "legacy":
+    if row["status"] == "legacy" and not allow_legacy:
         raise CrmWriteRefused(f"company {company_id} is a legacy company; it gets no CRM writes")
 
 
-def update_company(company_id, **columns):
+def update_company(company_id, only_if_unsent=False, legacy_link_only=False, allow_held_out=False, **columns):
     """
     Writes `columns` to the company's row in the CRM, one statement in one transaction.
     Raises CrmWriteRefused (a guard said no) or CrmWriteFailed (the CRM did not take it).
+
+    only_if_unsent: the statement also requires AE_DraftSentAt IS NULL, so a draft the CRM user has already sent can
+    never be overwritten, not even by a race. Returns True when the row was written and False when that guard matched
+    nothing (nothing is written then); without the flag a row that does not match is still a CrmWriteFailed.
+
+    legacy_link_only: the ONE exception to "a legacy company gets no CRM writes" (Japesh, 2026-10-19): a legacy company may have
+    its DownloadReportUrl moved to the current report host, and nothing else. Any other column with this flag is refused.
+    A test company, and a company not in ae_companies, are still refused.
+
+    A row whose Source belongs to a held-out batch (settings.BATCHES: GoodFirms, Clutch) is written only from inside a run of
+    that batch (`prepare --batch NAME`), so the scheduled jobs can never touch it, whatever else goes wrong; allow_held_out=True is
+    for the one-off tools that act on those rows on purpose (rewrite_drafts, drop_drafts).
     """
     _require_primary_database()
+    if legacy_link_only and set(columns) != {"DownloadReportUrl"}:
+        raise CrmWriteRefused("legacy_link_only allows DownloadReportUrl and nothing else; got " + ", ".join(sorted(columns)))
     if company_id >= settings.LEAD_ID_BASE:
-        return _update_lead(company_id, columns)
+        return _update_lead(company_id, columns, only_if_unsent)
     if settings.NO_SCRAPE_STATUS:                        # a CRM without that column (staging): nothing to write there
         columns = {k: v for k, v in columns.items() if k != settings.CRM["scrape_status"]}
         if not columns:
             return
     _check_columns(columns)
     _check_placeholder(columns)
-    _guard(company_id)
+    _guard(company_id, allow_legacy=legacy_link_only)
     table, id_col, src_col = settings.CRM["companies"], settings.CRM["company_id"], settings.CRM["source"]
     # every name is in the allow-list checked above; server-time columns carry no parameter
     sets = ", ".join(f"{n} = SYSUTCDATETIME()" if v is SERVER_NOW else f"{n} = %s"
@@ -201,11 +230,17 @@ def update_company(company_id, **columns):
         if row is None or ("*" not in settings.WRITE_SOURCES and row[0] not in settings.WRITE_SOURCES):
             raise CrmWriteRefused(f"CRM row {company_id} is missing or not a {' / '.join(settings.WRITE_SOURCES)} row "
                                   f"(Source={None if row is None else row[0]!r})")
-        cur.execute(f"UPDATE {table} SET {sets} WHERE {id_col} = %s", (*values, company_id))
+        _check_held_out(company_id, row[0], allow_held_out)
+        unsent = " AND AE_DraftSentAt IS NULL" if only_if_unsent else ""
+        cur.execute(f"UPDATE {table} SET {sets} WHERE {id_col} = %s{unsent}", (*values, company_id))
+        if only_if_unsent and cur.rowcount == 0:
+            conn.rollback()                      # the row exists (checked above), so it has been sent
+            return False
         if cur.rowcount != 1:
             conn.rollback()
             raise CrmWriteFailed(f"CRM row {company_id}: the update matched {cur.rowcount} rows, expected 1")
         conn.commit()
+        return True
     except (CrmWriteRefused, CrmWriteFailed):
         raise
     except Exception as exc:                    # a dropped connection, a timeout, a SQL error
@@ -218,7 +253,7 @@ def update_company(company_id, **columns):
         conn.close()
 
 
-def _update_lead(company_id, columns):
+def _update_lead(company_id, columns, only_if_unsent=False):
     """
     A lead taken from crm.CrmLeads: only the AE_ draft columns are written, to that row (found through
     ae_lead_map), never a deleted row, never a test company. crm.CrmLeads has no status or report columns, so those
@@ -245,11 +280,16 @@ def _update_lead(company_id, columns):
         found = cur.fetchone()
         if found is None or found[0]:
             raise CrmWriteRefused(f"lead {row['lead_id']} is missing or deleted in {table}")
-        cur.execute(f"UPDATE {table} SET {sets} WHERE Id = %s AND IsDeleted = 0", (*values, row["lead_id"]))
+        unsent = " AND AE_DraftSentAt IS NULL" if only_if_unsent else ""
+        cur.execute(f"UPDATE {table} SET {sets} WHERE Id = %s AND IsDeleted = 0{unsent}", (*values, row["lead_id"]))
+        if only_if_unsent and cur.rowcount == 0:
+            conn.rollback()
+            return False
         if cur.rowcount != 1:
             conn.rollback()
             raise CrmWriteFailed(f"lead {row['lead_id']}: the update matched {cur.rowcount} rows, expected 1")
         conn.commit()
+        return True
     except (CrmWriteRefused, CrmWriteFailed):
         raise
     except Exception as exc:

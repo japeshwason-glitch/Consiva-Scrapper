@@ -26,7 +26,7 @@ import db
 from campaign import crm_write, neverbounce, settings, settings_verify, status, verify
 from tests.test_campaign import DbCase
 
-REPORT_URL = "https://reports-consiva.gignati.com/r/" + "a" * 32 + ".pdf"
+REPORT_URL = "https://reports.consiva.tech/r/" + "a" * 32 + ".pdf"
 
 
 # --- a fake NeverBounce -------------------------------------------------------------

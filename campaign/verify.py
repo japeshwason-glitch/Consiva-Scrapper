@@ -425,6 +425,9 @@ def _stop(counts, code, message):
 
 
 def run(limit=None, dry_run=False, only_test=None, client=None):
+    from . import express
+    if express.active():                  # a held-out express batch: NeverBounce is not asked, nothing is spent
+        return express.verify(limit=limit, dry_run=dry_run, only_test=only_test)
     mode = settings_verify.MODE
     counts = _new_counts(mode, dry_run)
     if mode == "off":

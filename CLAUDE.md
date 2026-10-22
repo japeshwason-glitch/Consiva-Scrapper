@@ -117,7 +117,7 @@ otherwise assume about how a lead-gen pipeline "usually" works.
 **Scope (updated 2026-10-14, by Japesh).** Sources: **every** `dbo.CRM_Scrapper` row whatever its Source, a NULL one
 too (`AE_ALLOWED_SOURCES`, default `*`; a list narrows it), and `crm.CrmLeads` leads (not deleted, with an email, no
 `AE_` draft yet; mapped to integer ids above 1,000,000,000 by `ae_lead_map`, migration 011). It runs every day at
-**06:30 IST** (`python -m campaign.jobs daily`, scheduled by `campaign/crontab` in the `campaign` compose service):
+**every 15 minutes** (it was once a day at 06:30 IST until 2026-10-19; `python -m campaign.jobs daily`, scheduled by `campaign/crontab` in the `campaign` compose service; a tick that finds the previous run still going exits at once, on the job's advisory lock):
 take in what is new, stages 2-9 as production, stage 10 writes the `AE_` columns, repeated until nothing moves. What is
 already done is skipped (already in `ae_companies`; a lead already mapped or already carrying an `AE_` draft). NeverBounce
 is live there, within `AE_NEVERBOUNCE_DAILY_CREDIT_CAP` (5,000 a day) and `AE_DRAFTS_PER_DAY` (5,000). The approved email is the fixed text in `templates/email/` with the
@@ -169,6 +169,35 @@ PDFs and R2 uploads, the model calls) but **never write to the CRM, in any colum
 for the test cohort only; a production company can only reach `verified` and be drafted on a **live** verdict (stages 8 and
 9 each enforce it). Production companies are taken in by the scheduled job but not processed past intake until
 `AE_PRODUCTION_ENABLED=1` or `--production`.
+
+**Held-out batches and express batches** (added 2026-10-15 by Japesh; `campaign/express.py`, migrations 012-013). The
+GoodFirms and Clutch companies (Source `goodfirms` / `clutch`; their contacts are addresses published on the company's own
+website, role addresses included, no job titles) are a *held-out batch* (`AE_BATCHES`, default `gf_clutch`, `goodfirms`,
+`clutch`): `ae_companies.batch` tags them, and every stage, the funnel and the scheduled jobs (`daily`, `housekeeping`) only
+ever see `batch IS NULL`, and the default CRM reader never reads those Sources. They are run by hand only:
+`prepare --batch goodfirms --production [--last-stage N] [--write-ae]`. They are also *express batches*
+(`AE_EXPRESS_BATCHES`): stage 7 takes the CRM's primary contact (`IsPrimary`) with no title ranking and no model call; stage 8
+does **not** call NeverBounce and records the address as `nb_source='skipped'` (`nb_verdict='not_verified'`, decision OK, so the
+draft is `ready`); stage 9 drafts on it. This is the one exception to "a production company is drafted only on a live verdict":
+`drafting.verdict_usable()` accepts `skipped` for a company of an express batch and nobody else (a mock verdict is never
+usable). Express drafts spend no NeverBounce credit, so they are exempt from, and not counted by, `AE_DRAFTS_PER_DAY`.
+`--last-stage N` stops a production run after stage N (and skips the AE write): stage 7 on untitled contacts would set
+`held_no_contact`, which is final. The greeting is "Hi {first name}," only for a real name; a first name equal to the company
+name (what the directory import left in `FirstName`) is ignored, giving "Hello {company} team,".
+
+**Email template v2** (2026-10-19, by Japesh): one template, `templates/email/consent_v2.html.j2` (version `V2-1.0`), serves every
+band (the band still labels the draft as `AE_DraftBand`; the four older band templates are in `templates/email/archive_v1/`).
+Subject "We scanned {company}'s website—here are the DPDP Privacy gaps we found"; bullets list the tracking and third-party counts
+only when above zero (no banner / no privacy notice when both are zero); buttons "Fix My Website's Consent" (https://consiva.ai/)
+and "View your website scan" (the report link), and a "request a consultation" link (https://consiva.ai/contact). The report link
+host is `REPORT_PUBLIC_BASE_URL` (now `https://reports.consiva.tech`). `python -m campaign.rewrite_drafts` brings every draft the CRM
+user has **not** sent up to the current template and host: it writes through `crm_write.update_company(only_if_unsent=True)`, whose
+statement requires `AE_DraftSentAt IS NULL`, so a sent draft is never overwritten. Run it with `--dry-run` first.
+`--links-only` moves the report link (`DownloadReportUrl`, `ae_companies.report_url`, `reports.public_url`) of reports that have no
+draft. **One explicit exception to "a legacy company gets no CRM writes"** (granted by Japesh, 2026-10-19):
+`crm_write.update_company(legacy_link_only=True)` lets a legacy company have its `DownloadReportUrl` moved to the current report
+host, and refuses every other column; a test company and a company not in `ae_companies` are still refused, and the tool skips any
+company the CRM already shows an Email activity for.
 
 **Reports** (the PDF) are still deterministic: no model, no screenshots, exactly one page, never dropping a gap to fit;
 every customer-facing word is in `report_catalogue.yaml`. The PDF score is the CRM `GapScore`

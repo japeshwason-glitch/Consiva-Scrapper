@@ -49,9 +49,12 @@ class CrmReader:
 
     CHUNK = 500       # ids per IN (...) list; SQL Server allows 2,100 parameters
 
-    def __init__(self, conn=None):
+    def __init__(self, conn=None, batch=None):
         self._conn = conn or connect()
         self.c = settings.CRM
+        if batch is not None and batch not in settings.BATCHES:
+            raise ValueError(f"unknown batch {batch!r}; known: {sorted(settings.BATCHES)}")
+        self.batch = batch
 
     def close(self):
         self._conn.close()
@@ -63,11 +66,28 @@ class CrmReader:
         return cur.fetchall()
 
     def _source_filter(self):
+        """
+        (sql, params) restricting a read to the Sources in scope. A batch reader sees only that batch's Sources.
+        Every other reader (the scheduled jobs, a plain `prepare`) never sees the Source of any held-out batch,
+        whatever AE_ALLOWED_SOURCES says. Held-out Sources are compared lower-case, so the collation cannot let one leak.
+        """
+        src = self.c["source"]
+        if self.batch:
+            batch_sources = settings.BATCHES[self.batch]
+            marks = ", ".join(["%s"] * len(batch_sources))
+            return f"LOWER({src}) IN ({marks})", list(batch_sources)
         sources = settings.ALLOWED_SOURCES
         if "*" in sources:                      # any Source, a NULL one too
-            return "1 = 1", []
-        marks = ", ".join(["%s"] * len(sources))
-        return f"{self.c['source']} IN ({marks})", list(sources)
+            where, params = "1 = 1", []
+        else:
+            marks = ", ".join(["%s"] * len(sources))
+            where, params = f"{src} IN ({marks})", list(sources)
+        held = settings.HELD_OUT_SOURCES
+        if held:
+            marks = ", ".join(["%s"] * len(held))
+            where += f" AND ({src} IS NULL OR LOWER({src}) NOT IN ({marks}))"
+            params += list(held)
+        return where, params
 
     def companies_after(self, after_id=0):
         """Every company of an allowed source above `after_id`, with both status columns."""
@@ -79,6 +99,29 @@ class CrmReader:
             f"ORDER BY {c['company_id']}", [*params, after_id])
         return [{"id": r[0], "website": r[1], "scrape_status": r[2], "report_status": r[3],
                  "company_scale": r[4], "company_name": r[5], "industry": r[6]} for r in rows]
+
+    def unsent_drafts(self):
+        """
+        Every draft written into the CRM that nobody has sent yet (AE_DraftSentAt is NULL), of any Source:
+        {"companies": [dbo.CRM_Scrapper ids], "leads": [crm.CrmLeads GUIDs, lower-case]}. 'ready' and 'risky' only:
+        an 'expired' draft is not a draft anyone will send. Not narrowed by AE_ALLOWED_SOURCES or any held-out batch.
+        """
+        c = self.c
+        rows = self._select(
+            f"SELECT {c['company_id']} FROM {c['companies']} WHERE AE_DraftStatus IN ('ready', 'risky') "
+            f"AND AE_DraftSentAt IS NULL ORDER BY {c['company_id']}")
+        leads = self._select(
+            f"SELECT CAST(Id AS varchar(36)) FROM {settings.CRM_LEADS_TABLE} WHERE AE_DraftStatus IN ('ready', 'risky') "
+            f"AND AE_DraftSentAt IS NULL AND IsDeleted = 0")
+        return {"companies": [r[0] for r in rows], "leads": sorted(r[0].lower() for r in leads)}
+
+    def old_host_no_draft_ids(self, old_base):
+        """CRM_Scrapper ids whose DownloadReportUrl is on `old_base` and that have no draft at all (AE_DraftStatus NULL)."""
+        c = self.c
+        rows = self._select(
+            f"SELECT {c['company_id']} FROM {c['companies']} WHERE {c['report_url']} LIKE %s AND AE_DraftStatus IS NULL "
+            f"ORDER BY {c['company_id']}", [old_base.rstrip("/") + "/%"])
+        return [r[0] for r in rows]
 
     def report_rows(self, company_ids):
         """Companies that already carry a generated report: what adoption reads. [{id, website, ..., report_url, ...}]"""
@@ -111,12 +154,13 @@ class CrmReader:
             marks = ", ".join(["%s"] * len(chunk))
             rows = self._select(
                 f"SELECT CAST({c['contact_id']} AS varchar(36)), {c['contact_company_id']}, "
-                f"{c['contact_email']}, {c['contact_title']}, {c['contact_first_name']} FROM {c['contacts']} "
+                f"{c['contact_email']}, {c['contact_title']}, {c['contact_first_name']}, {c['contact_primary']} "
+                f"FROM {c['contacts']} "
                 f"WHERE {c['contact_deleted']} = 0 AND {c['contact_company_id']} IN ({marks}) "
                 f"AND {c['contact_email']} IS NOT NULL AND LTRIM(RTRIM({c['contact_email']})) <> ''",
                 chunk)
             out += [{"contact_id": r[0].lower(), "company_id": r[1], "email": r[2], "job_title": r[3],
-                     "first_name": (r[4] or "").strip() or None} for r in rows]
+                     "first_name": (r[4] or "").strip() or None, "is_primary": bool(r[5])} for r in rows]
         return out
 
     def emailed_company_ids(self, company_ids):

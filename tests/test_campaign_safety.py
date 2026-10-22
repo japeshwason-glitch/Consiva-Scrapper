@@ -306,12 +306,12 @@ class OnlyTheNamedCompanies(ScanCase):
         with self.assertRaises(RuntimeError):
             with status.only_companies([1]):
                 raise RuntimeError("boom")
-        self.assertEqual(status.scope_sql(), ("", []))
+        self.assertEqual(status.scope_sql(), (" AND batch IS NULL", []))     # no id limit; untagged companies only
 
-    def test_no_scope_means_no_limit(self):
-        self.assertEqual(status.scope_sql(), ("", []))
+    def test_no_scope_means_no_id_limit(self):
+        self.assertEqual(status.scope_sql(), (" AND batch IS NULL", []))
         with status.only_companies([]):
-            self.assertEqual(status.scope_sql(), ("", []))
+            self.assertEqual(status.scope_sql(), (" AND batch IS NULL", []))
 
     def test_the_scan_stage_scans_only_the_named_company(self):
         self.add_checked(1)
